@@ -56,7 +56,7 @@ use scheda_blocking::{Blocking, blocking};
 use crate::collection::{Declaration, Declarations, Kind as CollectionKind};
 use crate::documents::WalkState;
 use crate::error::{Context, Error, Fault};
-use crate::generation::{self, Commit, Declared, Embedder, Generation, Retired};
+use crate::generation::{self, Commit, Declared, Embedder, Generation, Replaced, Retired};
 use crate::id::require_document_id;
 use crate::index::{Counts, State};
 use crate::ports::{EmbedderPort, Installed, ProjectorPort};
@@ -65,7 +65,7 @@ use crate::store::{Column, Embedding, Embeddings, Kind, Row, Shape, Table, Vecto
 use crate::{isolated, journal};
 
 /// How many files a round reads, projects, and writes at a time.
-const BATCH: usize = 256;
+pub(crate) const BATCH: usize = 256;
 
 /// The ports a round of the Lance side calls, as the Vault holds them when
 /// the round begins.
@@ -473,10 +473,7 @@ impl Work<'_> {
             .collect();
         for name in gone {
             if let Some(table) = self.commit.tables.remove(&name) {
-                self.commit.dropped.push(Retired {
-                    name: table.name,
-                    at: generation::now_millis(),
-                });
+                self.commit.dropped.push(Retired::now(table.name));
             }
         }
         for decl in declarations.iter().filter(|decl| indexed(decl)) {
@@ -531,17 +528,36 @@ impl Work<'_> {
             let earlier = self.earlier_vectors(name).await;
             self.apply(&mut table, earlier.as_ref(), decl, to, scope)
                 .await?;
+            // What a reader of the live `commit`, or of one it replaced
+            // less than an hour ago, may still open.
+            let keep = known
+                .as_ref()
+                .map(|known| known.keep_from(generation::now_millis()));
             table
-                .maintain(self.commit.rounds + 1)
+                .maintain(self.commit.rounds + 1, keep.as_ref())
                 .await
                 .with_context(|| format!("maintain the table of {name}"))?;
+            let versions = table.versions();
+            let mut replaced = Vec::new();
+            if let Some(known) = known {
+                replaced = known.replaced;
+                if known.versions != versions {
+                    // Named by the live `commit` until the next one: the
+                    // round after this one stamps the moment.
+                    replaced.push(Replaced {
+                        versions: known.versions,
+                        since: None,
+                    });
+                }
+            }
             self.commit.tables.insert(
                 name.to_owned(),
                 generation::Table {
                     name: table_name,
                     shape,
                     declared,
-                    versions: table.versions(),
+                    versions,
+                    replaced,
                 },
             );
         }
@@ -569,10 +585,7 @@ impl Work<'_> {
         for column in known.versions.texts.keys() {
             let texts = texts_name(name, column);
             if !kept.contains(&texts) {
-                self.commit.dropped.push(Retired {
-                    name: texts,
-                    at: generation::now_millis(),
-                });
+                self.commit.dropped.push(Retired::now(texts));
             }
         }
     }

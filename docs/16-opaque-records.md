@@ -445,7 +445,7 @@ edits wait for F9; `13` names the rule.
 - [x] `more_like_this` with source `id` still builds text from what the
       Index holds for that Record (`13` §3), now Projector full-text, not
       Schema fields.
-- [x] Edges / `walk` stay absent (`13` §7).
+- [x] Edges / `walk` stay absent (`13` §8).
 - [x] Owner has reviewed the `06` / `13` diff.
 
 **Review:** `06`, `13`. Stop.

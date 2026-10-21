@@ -178,6 +178,32 @@ pub trait CollectionSync: ::core::marker::Send + ::core::marker::Sync {
         >,
         ::protocontract::Error,
     >;
+    /// The vectors the Index holds in one `vector` column for the given
+    /// Documents, as they were stored, with the digest of the text each was
+    /// made from: one item per vector, in the order of the ids, a `text list`
+    /// in the order of its texts, and one `absent` item for an id that has
+    /// none. No model is called. A lazy stream: the vectors are read in
+    /// portions of a few Documents as the stream reaches them, so its memory
+    /// does not grow with the ids. It reads one snapshot of the Index, taken
+    /// when the call starts, for one hour: an item asked later is
+    /// `FAILED_PRECONDITION` (ask again for the ids not given yet). With
+    /// `not_before`, it first waits for the Index to reach that state. A
+    /// column the Projector does not mark `vector` for the collection,
+    /// `INVALID_ARGUMENT`; a collection whose `index_scope` keeps no vectors,
+    /// or an encrypted one, `UNIMPLEMENTED`. The Index codes of `Query`.
+    fn get_vectors(
+        &self,
+        vector_selection: crate::proto::scheda::v1::VectorSelection,
+    ) -> ::core::result::Result<
+        ::protocontract::BoxIter<
+            'static,
+            ::core::result::Result<
+                crate::proto::scheda::v1::VectorItem,
+                ::protocontract::Error,
+            >,
+        >,
+        ::protocontract::Error,
+    >;
 }
 /// One collection of a Vault, from `Vault.GetCollection`: its Documents,
 /// read and written. It names its collection: every call finds it again,
@@ -380,6 +406,33 @@ pub trait CollectionAsync: ::core::marker::Send + ::core::marker::Sync {
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
+    /// The vectors the Index holds in one `vector` column for the given
+    /// Documents, as they were stored, with the digest of the text each was
+    /// made from: one item per vector, in the order of the ids, a `text list`
+    /// in the order of its texts, and one `absent` item for an id that has
+    /// none. No model is called. A lazy stream: the vectors are read in
+    /// portions of a few Documents as the stream reaches them, so its memory
+    /// does not grow with the ids. It reads one snapshot of the Index, taken
+    /// when the call starts, for one hour: an item asked later is
+    /// `FAILED_PRECONDITION` (ask again for the ids not given yet). With
+    /// `not_before`, it first waits for the Index to reach that state. A
+    /// column the Projector does not mark `vector` for the collection,
+    /// `INVALID_ARGUMENT`; a collection whose `index_scope` keeps no vectors,
+    /// or an encrypted one, `UNIMPLEMENTED`. The Index codes of `Query`.
+    fn get_vectors(
+        &self,
+        vector_selection: crate::proto::scheda::v1::VectorSelection,
+    ) -> impl ::core::future::Future<
+        Output = ::core::result::Result<
+            impl ::protocontract::Stream<
+                Item = ::core::result::Result<
+                    crate::proto::scheda::v1::VectorItem,
+                    ::protocontract::Error,
+                >,
+            > + ::core::marker::Send + use<Self>,
+            ::protocontract::Error,
+        >,
+    > + ::core::marker::Send;
 }
 /// Any `CollectionAsync` implementation behind dynamic dispatch, for an implementation chosen at run time. It implements `CollectionAsync` itself, so generic code takes it like any other implementation.
 ///
@@ -570,6 +623,22 @@ impl CollectionAsync for DynCollectionAsync {
     > + ::core::marker::Send {
         self.inner.search(document_search)
     }
+    fn get_vectors(
+        &self,
+        vector_selection: crate::proto::scheda::v1::VectorSelection,
+    ) -> impl ::core::future::Future<
+        Output = ::core::result::Result<
+            impl ::protocontract::Stream<
+                Item = ::core::result::Result<
+                    crate::proto::scheda::v1::VectorItem,
+                    ::protocontract::Error,
+                >,
+            > + ::core::marker::Send + use<>,
+            ::protocontract::Error,
+        >,
+    > + ::core::marker::Send {
+        self.inner.get_vectors(vector_selection)
+    }
 }
 /// The dyn-compatible face behind the handle: every future and reply
 /// stream boxed.
@@ -720,6 +789,22 @@ mod __dyn_collection_async {
                     'static,
                     ::core::result::Result<
                         crate::proto::scheda::v1::SearchItem,
+                        ::protocontract::Error,
+                    >,
+                >,
+                ::protocontract::Error,
+            >,
+        >;
+        fn get_vectors(
+            &self,
+            vector_selection: crate::proto::scheda::v1::VectorSelection,
+        ) -> ::protocontract::BoxFuture<
+            '_,
+            ::core::result::Result<
+                ::protocontract::BoxStream<
+                    'static,
+                    ::core::result::Result<
+                        crate::proto::scheda::v1::VectorItem,
                         ::protocontract::Error,
                     >,
                 >,
@@ -969,6 +1054,40 @@ mod __dyn_collection_async {
                 )
             })
         }
+        fn get_vectors(
+            &self,
+            vector_selection: crate::proto::scheda::v1::VectorSelection,
+        ) -> ::protocontract::BoxFuture<
+            '_,
+            ::core::result::Result<
+                ::protocontract::BoxStream<
+                    'static,
+                    ::core::result::Result<
+                        crate::proto::scheda::v1::VectorItem,
+                        ::protocontract::Error,
+                    >,
+                >,
+                ::protocontract::Error,
+            >,
+        > {
+            ::std::boxed::Box::pin(async move {
+                let stream = <T as super::CollectionAsync>::get_vectors(
+                        self,
+                        vector_selection,
+                    )
+                    .await?;
+                ::core::result::Result::Ok(
+                    ::std::boxed::Box::pin(stream)
+                        as ::protocontract::BoxStream<
+                            'static,
+                            ::core::result::Result<
+                                crate::proto::scheda::v1::VectorItem,
+                                ::protocontract::Error,
+                            >,
+                        >,
+                )
+            })
+        }
     }
 }
 impl<T: CollectionSync> CollectionAsync for ::protocontract::Inline<T> {
@@ -1111,6 +1230,21 @@ impl<T: CollectionSync> CollectionAsync for ::protocontract::Inline<T> {
         ::protocontract::Error,
     > {
         <T as CollectionSync>::search(Self::get_ref(self), document_search)
+            .map(Self::reply_stream)
+    }
+    async fn get_vectors(
+        &self,
+        vector_selection: crate::proto::scheda::v1::VectorSelection,
+    ) -> ::core::result::Result<
+        impl ::protocontract::Stream<
+            Item = ::core::result::Result<
+                crate::proto::scheda::v1::VectorItem,
+                ::protocontract::Error,
+            >,
+        > + ::core::marker::Send + use<T>,
+        ::protocontract::Error,
+    > {
+        <T as CollectionSync>::get_vectors(Self::get_ref(self), vector_selection)
             .map(Self::reply_stream)
     }
 }
@@ -1302,6 +1436,25 @@ impl<T: CollectionSync + 'static> CollectionAsync for ::protocontract::Offload<T
             move |service| <T as CollectionSync>::search(service, document_search),
         )
     }
+    fn get_vectors(
+        &self,
+        vector_selection: crate::proto::scheda::v1::VectorSelection,
+    ) -> impl ::core::future::Future<
+        Output = ::core::result::Result<
+            impl ::protocontract::Stream<
+                Item = ::core::result::Result<
+                    crate::proto::scheda::v1::VectorItem,
+                    ::protocontract::Error,
+                >,
+            > + ::core::marker::Send + use<T>,
+            ::protocontract::Error,
+        >,
+    > + ::core::marker::Send {
+        Self::server_streaming(
+            self,
+            move |service| <T as CollectionSync>::get_vectors(service, vector_selection),
+        )
+    }
 }
 impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<T> {
     fn describe(
@@ -1477,6 +1630,24 @@ impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<
         Self::block_on_stream(
             self,
             <T as CollectionAsync>::search(Self::get_ref(self), document_search),
+        )
+    }
+    fn get_vectors(
+        &self,
+        vector_selection: crate::proto::scheda::v1::VectorSelection,
+    ) -> ::core::result::Result<
+        ::protocontract::BoxIter<
+            'static,
+            ::core::result::Result<
+                crate::proto::scheda::v1::VectorItem,
+                ::protocontract::Error,
+            >,
+        >,
+        ::protocontract::Error,
+    > {
+        Self::block_on_stream(
+            self,
+            <T as CollectionAsync>::get_vectors(Self::get_ref(self), vector_selection),
         )
     }
 }
@@ -1780,6 +1951,21 @@ pub mod collection_ref {
             ::protocontract::Error,
         > {
             self.0.search(document_search)
+        }
+        fn get_vectors(
+            &self,
+            vector_selection: crate::proto::scheda::v1::VectorSelection,
+        ) -> ::core::result::Result<
+            ::protocontract::BoxIter<
+                'static,
+                ::core::result::Result<
+                    crate::proto::scheda::v1::VectorItem,
+                    ::protocontract::Error,
+                >,
+            >,
+            ::protocontract::Error,
+        > {
+            self.0.get_vectors(vector_selection)
         }
     }
     impl ::core::fmt::Debug for CollectionRef {

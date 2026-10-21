@@ -65,6 +65,23 @@ rust_test(
     visibility = ["//rust:__pkg__"],
 )
 
+# The memory tests (`memory::`, ignored by the other targets): each measures
+# the allocations of the whole process, so they run alone, one at a time.
+# Cargo: `cargo test -p scheda --lib -- --ignored --test-threads=1 memory::`.
+rust_test(
+    name = "scheda_memory_test",
+    size = "medium",
+    args = [
+        "--ignored",
+        "--test-threads=1",
+        "memory::",
+    ],
+    compile_data = glob(["testdata/**"]),
+    crate = ":scheda",
+    crate_features = _SCHEDA_FEATURES,
+    visibility = ["//rust:__pkg__"],
+)
+
 rust_test(
     name = "scheda_thin_test",
     size = "small",

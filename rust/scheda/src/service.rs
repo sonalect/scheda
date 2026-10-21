@@ -42,7 +42,7 @@ use scheda_api::v1::{
     DocumentQuery, DocumentSearch, DocumentSelection, DocumentUpdate, DocumentUpsert,
     DocumentWriteResult, Feature, MirrorAsync, MirrorInfo, MirrorSetting, PortChange, QueryItem,
     SchedaAsync, SchedaInfo, SearchItem, VaultAsync, VaultDocumentOperation, VaultInfo,
-    VaultOpening, VaultQuery, VaultSearch,
+    VaultOpening, VaultQuery, VaultSearch, VectorItem, VectorSelection,
 };
 #[cfg(feature = "index")]
 use scheda_api::v1::{IndexAsync, IndexState};
@@ -51,6 +51,8 @@ use scheda_api::v1::{IndexAsync, IndexState};
 use crate::queries::{self, Page, Reading};
 #[cfg(feature = "index")]
 use crate::search::{self, Hits};
+#[cfg(feature = "index")]
+use crate::vectors::Vectors;
 use scheda_blocking::Blocking;
 
 use crate::collections::Writes as CollectionWrites;
@@ -763,6 +765,33 @@ impl CollectionAsync for CollectionObject {
         {
             let _ = (pass, document_search);
             Err::<NoStream<SearchItem>, _>(unavailable("Collection.Search"))
+        }
+    }
+
+    async fn get_vectors(
+        &self,
+        vector_selection: VectorSelection,
+    ) -> Result<impl Stream<Item = Result<VectorItem, Error>> + Send + use<>, Error> {
+        let pass = self.enter()?;
+        #[cfg(feature = "index")]
+        {
+            stored::validate(&vector_selection)
+                .context("check the request")
+                .context("Collection.GetVectors")?;
+            queries::not_before(&pass, vector_selection.not_before.as_deref())
+                .await
+                .context("Collection.GetVectors")?;
+            // Before the `commit` is read: the snapshot is on disk for an
+            // hour from here.
+            let began = tokio::time::Instant::now();
+            let reading = Reading::of(&pass).await.context("Collection.GetVectors")?;
+            Vectors::new(&self.vault, &reading, &self.name, vector_selection, began)
+                .context("Collection.GetVectors")
+        }
+        #[cfg(not(feature = "index"))]
+        {
+            let _ = (pass, vector_selection);
+            Err::<NoStream<VectorItem>, _>(unavailable("Collection.GetVectors"))
         }
     }
 }

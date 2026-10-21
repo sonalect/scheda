@@ -8,6 +8,84 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- `Collection.GetVectors(VectorSelection)`: the vectors the Index holds in
+  one `vector` column for a list of ids, as they were stored, without
+  embedding anything. A lazy stream of `VectorItem`: one `StoredVector`
+  (`id`, `position` of the text, `digest`, `values`) per vector, in the
+  order of the ids and, for a `text list`, of its texts, and one `absent`
+  item for an id without one. `digest` is the git blob id of the text the
+  vector was made from: compare it with that of your current text to tell
+  whether the Index has caught up. It reads portions of 64 ids, so its
+  memory does not grow with the ids, from one snapshot of the Index, for
+  one hour: an item asked later is `FAILED_PRECONDITION`, ask again for
+  the ids not given yet. A column not marked `vector` is
+  `INVALID_ARGUMENT`; a collection whose `index_scope` keeps no vectors is
+  `UNIMPLEMENTED`. The CLI has it as `collection NAME get-vectors
+  --selection JSON`.
+- `DocumentSearch.vector`, a third subject: a vector you made (the mean of
+  stored vectors, a vector of the same model made elsewhere) and the
+  `vector` column it is compared with. Only the vector leg runs, in that
+  column, and no model is called, so it needs no embedder. A length other
+  than that of the column's vectors, or a column no collection in scope
+  keeps vectors in, is `INVALID_ARGUMENT`; so are values that are not
+  finite or all 0, `vector_weight` 0, and `rerank_limit` (the reranker
+  needs a text). The vector must come from the column's embedding space;
+  only its length can be checked.
+- `DocumentSearch.exact`: the vector leg scans every vector the filter
+  admits instead of asking the IVF_PQ index of a large table, so it finds
+  the exact nearest, Documents at the same distance in `id` order, and
+  the same hits after writes and index rebuilds. Its memory is bounded
+  (about 47 MB for 200 000 vectors of 256 values, as for 20 000). Off by
+  default: a search without it is as fast as before.
+- `DocumentSearch.min_vector_score` (above 0, at most 1; needs `exact`):
+  the vector leg finds only Documents whose `vector_score` is at least
+  this, nearest first, paged by `offset` and `k`, so a caller can walk
+  "every Document at least this close". It needs `exact` because through
+  an IVF_PQ index of cosine vectors Lance compares a distance bound with
+  the index's own distances, not with the cosine distance.
+- `bazel test //rust/scheda:scheda_memory_test`: the memory tests of the
+  library, which measure the allocations of the whole process and so run
+  alone, one at a time (Cargo: `cargo test -p scheda --lib -- --ignored
+  --test-threads=1 memory::`).
+
+### Changed
+
+- The contract renumbers the fields of `DocumentSearch` after its new
+  subject (`filter` is 4 … `not_before` 13). Protobuf JSON is unchanged;
+  a binary encoding of the old numbers no longer reads.
+- The Index removes an old Lance version, a dropped table, or a retired
+  generation an hour after the live `commit` stopped naming it, as the
+  round after the one that replaced it stamps that moment. `commit` gains
+  `records_replaced` and, per table, `replaced` (versions earlier commits
+  named and when they stopped), and a dropped table or a retired
+  generation gains `stamped`. A `commit` of an earlier Scheda is read: the
+  first round keeps every version for one more hour. An earlier Scheda
+  reads the new `commit` too (it ignores the new fields), so processes on
+  one Vault may be upgraded one at a time.
+- An index round's memory follows the Documents it applies, not the rows
+  of the table: the files table gets a B-tree index on `path`, so
+  recording a file no longer joins against the whole table (6.8 MB
+  allocated in a table of 100 000 rows, was 24 MB); the vectors a round
+  reuses are read batch by batch, not joined into one batch; and the
+  datasets a round opens keep 256 KiB in each of Lance's caches instead
+  of 1 GiB and 6 GiB, so removing 10 000 Documents holds 0.8 MB more than
+  removing 100 (was 2.3 MB). Each file Lance writes still takes a 5 MiB
+  buffer, whatever its size.
+- `VECTOR_LEG_NO_EMBEDDER` is the reason only for a `text` or a `like`
+  subject; a `vector` subject needs no embedder.
+
+### Fixed
+
+- A round that wrote one table for more than an hour, or the first round
+  after a process was killed during one, pruned the Lance version the
+  live `commit` still named, and queries and searches of other processes
+  failed with `INDEX_BROKEN` or `STORAGE` until the next `commit`. Dropped
+  tables and a retired generation were likewise stamped before their
+  replacement was written. A reader is now safe for one hour from the
+  moment it read `commit`, however long a round takes.
+
 ## [0.24.1] - 2026-10-21
 
 ### Added

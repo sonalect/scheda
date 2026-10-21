@@ -42,7 +42,9 @@
 //! so one call sees one state across all collections. A round writes new
 //! versions and then `commit`; a dataset ahead of `commit` (a round died
 //! after writing it) is restored to the version `commit` names before
-//! anything else is written to it.
+//! anything else is written to it. A round prunes only the versions before
+//! the oldest one a reader may still open: the one `commit` names, or one an
+//! earlier `commit` named until less than [`VERSION_LIFETIME`] ago.
 //!
 //! **Typed only.** A delete, an upsert, and a filter are built as typed
 //! expressions; no text of a query language is ever made from values.
@@ -50,8 +52,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
+use futures_util::StreamExt;
 use lance::Dataset;
 use lance::dataset::cleanup::CleanupPolicy;
 use lance::dataset::optimize::{CompactionOptions, compact_files};
@@ -117,8 +120,11 @@ const ROUNDS_PER_INDEX_UPDATE: u64 = 50;
 /// Deltas of a vector index merged into one once there are more.
 const VECTOR_INDEX_DELTAS: usize = 4;
 
-/// How long a version stays after it was replaced: no read of the Index
-/// lasts longer than one call, so this is a margin over seconds.
+/// How long what a `commit` stopped naming (a version, a dropped table, a
+/// retired generation) stays on disk after it stopped: a reader reads the
+/// Index within this time from the moment before it read `commit`. A query
+/// or a search reads it at its start; a stream of stored vectors refuses an
+/// item asked later.
 pub(crate) const VERSION_LIFETIME: Duration = Duration::from_secs(3_600);
 
 /// The prefix of the columns the Index keeps for itself beside a caller's.
@@ -128,7 +134,7 @@ const DIGEST_PREFIX: &str = "_digest_";
 /// The columns of a texts dataset beside `id` and `file`: the place of the
 /// text in its list, the digest of the text, and its vector.
 pub(crate) const POSITION: &str = "position";
-const DIGEST: &str = "digest";
+pub(crate) const DIGEST: &str = "digest";
 pub(crate) const VECTOR: &str = "vector";
 
 /// The failure of Lance on the Index: the storage below it (`STORAGE`), or
@@ -530,9 +536,24 @@ fn uri(path: &Path) -> Result<String, Fault> {
     })
 }
 
+/// What Lance keeps in memory of a dataset open for a round or for a
+/// rebuild's vectors, in each of its two caches (metadata, and index
+/// pages): about what the latest version needs, not what every version the
+/// round wrote left there. With Lance's defaults (1 GiB and 6 GiB) each
+/// version a round writes adds its manifest, deletion files, and index
+/// metadata (about 28 KB a version, measured), so removing 10 000
+/// Documents from a table of 100 000 held 2.3 MB more than removing 100;
+/// with this, 0.8 MB, and the round allocates no more.
+const ROUND_CACHE: usize = 256 * 1024;
+
 /// The dataset at `path` at `version`, or the latest one.
 async fn open_at(path: &Path, version: Option<u64>) -> Result<Dataset, Fault> {
-    let dataset = Dataset::open(&uri(path)?).await.map_err(lance_fault)?;
+    let dataset = lance::dataset::builder::DatasetBuilder::from_uri(uri(path)?)
+        .with_metadata_cache_size_bytes(ROUND_CACHE)
+        .with_index_cache_size_bytes(ROUND_CACHE)
+        .load()
+        .await
+        .map_err(lance_fault)?;
     match version {
         Some(version) if version != dataset.version().version => {
             dataset.checkout_version(version).await.map_err(lance_fault)
@@ -541,16 +562,18 @@ async fn open_at(path: &Path, version: Option<u64>) -> Result<Dataset, Fault> {
     }
 }
 
-/// A new, empty dataset of `schema` at `path`, replacing what is there.
+/// A new, empty dataset of `schema` at `path`, replacing what is there,
+/// open as [`open_at`] opens one.
 async fn create(path: &Path, schema: SchemaRef) -> Result<Dataset, Fault> {
     let empty = RecordBatchIterator::new(Vec::<Result<RecordBatch, _>>::new(), schema);
     let params = WriteParams {
         mode: WriteMode::Overwrite,
         ..WriteParams::default()
     };
-    Dataset::write(empty, uri(path)?.as_str(), Some(params))
+    let made = Dataset::write(empty, uri(path)?.as_str(), Some(params))
         .await
-        .map_err(lance_fault)
+        .map_err(lance_fault)?;
+    open_at(path, Some(made.version().version)).await
 }
 
 /// The dataset at `path` for a round: at `committed` when a round wrote
@@ -590,7 +613,9 @@ fn one_of(column: &str, values: &[String]) -> Expr {
 pub(crate) type Embeddings = HashMap<String, Vec<Embedding>>;
 
 /// The embeddings `rows`, a rows dataset of `shape`, and `texts`, its texts
-/// datasets, hold for the rows `ids`.
+/// datasets, hold for the rows `ids`. Each scan is read as Lance streams
+/// it, batch by batch: what it holds beyond the embeddings it gives is one
+/// batch, not the whole result joined into one.
 async fn embeddings(
     rows: &Dataset,
     texts: &BTreeMap<String, Arc<Dataset>>,
@@ -613,26 +638,31 @@ async fn embeddings(
             .project(&projection)
             .map_err(lance_fault)?
             .filter_expr(one_of("id", ids));
-        let batch = scanner
-            .try_into_batch()
+        let mut batches = scanner
+            .try_into_stream()
             .await
             .map_err(lance_fault)
             .context("read the stored vectors")?;
-        let id = strings(&batch, "id")?;
-        for name in &columns {
-            let digests = strings(&batch, &digest_name(name))?;
-            let vectors = vectors_in(&batch, &vector_name(name))?;
-            for n in 0..batch.num_rows() {
-                if digests.is_null(n) || vectors.is_null(n) {
-                    continue;
+        while let Some(batch) = batches.next().await {
+            let batch = batch
+                .map_err(lance_fault)
+                .context("read the stored vectors")?;
+            let id = strings(&batch, "id")?;
+            for name in &columns {
+                let digests = strings(&batch, &digest_name(name))?;
+                let vectors = vectors_in(&batch, &vector_name(name))?;
+                for n in 0..batch.num_rows() {
+                    if digests.is_null(n) || vectors.is_null(n) {
+                        continue;
+                    }
+                    out.entry(id.value(n).to_owned())
+                        .or_default()
+                        .push(Embedding {
+                            position: 0,
+                            vector: vector_at(vectors, n)?,
+                            digest: digests.value(n).to_owned(),
+                        });
                 }
-                out.entry(id.value(n).to_owned())
-                    .or_default()
-                    .push(Embedding {
-                        position: 0,
-                        vector: vector_at(vectors, n)?,
-                        digest: digests.value(n).to_owned(),
-                    });
             }
         }
     }
@@ -642,23 +672,28 @@ async fn embeddings(
             .project(&["id", POSITION, DIGEST, VECTOR])
             .map_err(lance_fault)?
             .filter_expr(one_of("id", ids));
-        let batch = scanner
-            .try_into_batch()
+        let mut batches = scanner
+            .try_into_stream()
             .await
             .map_err(lance_fault)
             .context("read the stored vectors of the texts")?;
-        let id = strings(&batch, "id")?;
-        let positions = positions_in(&batch)?;
-        let digests = strings(&batch, DIGEST)?;
-        let vectors = vectors_in(&batch, VECTOR)?;
-        for n in 0..batch.num_rows() {
-            out.entry(id.value(n).to_owned())
-                .or_default()
-                .push(Embedding {
-                    position: positions.value(n),
-                    vector: vector_at(vectors, n)?,
-                    digest: digests.value(n).to_owned(),
-                });
+        while let Some(batch) = batches.next().await {
+            let batch = batch
+                .map_err(lance_fault)
+                .context("read the stored vectors of the texts")?;
+            let id = strings(&batch, "id")?;
+            let positions = positions_in(&batch)?;
+            let digests = strings(&batch, DIGEST)?;
+            let vectors = vectors_in(&batch, VECTOR)?;
+            for n in 0..batch.num_rows() {
+                out.entry(id.value(n).to_owned())
+                    .or_default()
+                    .push(Embedding {
+                        position: positions.value(n),
+                        vector: vector_at(vectors, n)?,
+                        digest: digests.value(n).to_owned(),
+                    });
+            }
         }
     }
     Ok(out)
@@ -975,16 +1010,21 @@ impl Table {
     /// texts datasets included: compaction of the small fragments once
     /// [`SMALL_FRAGMENTS`] of them have piled up (or one has most of its
     /// rows deleted); the indices on `id`, the `scalar_index` and `fts`
-    /// columns, and, from [`VECTOR_INDEX_ROWS`] rows (texts) on, the
-    /// vectors; the indices brought over new rows when many are unindexed
-    /// or every [`ROUNDS_PER_INDEX_UPDATE`] rounds; and the versions
-    /// replaced more than [`VERSION_LIFETIME`] ago pruned. `round` counts
-    /// the rounds of the generation.
+    /// columns, `path` of the files, and, from [`VECTOR_INDEX_ROWS`] rows
+    /// (texts) on, the vectors; the indices brought over new rows when many are unindexed
+    /// or every [`ROUNDS_PER_INDEX_UPDATE`] rounds; and the versions before
+    /// `keep` pruned: those no reader may still open. `keep` is `None` for
+    /// a table no `commit` named yet: nothing is pruned. `round` counts the
+    /// rounds of the generation.
     ///
     /// # Errors
     ///
     /// `INDEX_BROKEN` or `STORAGE` when Lance fails.
-    pub(crate) async fn maintain(&mut self, round: u64) -> Result<(), Error> {
+    pub(crate) async fn maintain(
+        &mut self,
+        round: u64,
+        keep: Option<&Versions>,
+    ) -> Result<(), Error> {
         if !self.written {
             return Ok(());
         }
@@ -1018,13 +1058,21 @@ impl Table {
         }
         let vectors: Vec<String> = self.shape.row_vectors().map(vector_name).collect();
         keep_indexed(&mut rows, &scalar, &vectors, self.shape.dimensions, round).await?;
-        prune(&rows).await.context("prune the rows")?;
-        prune(&files).await.context("prune the files")?;
+        // `put_files` joins on `path` and `remove_files` filters by it: with
+        // the index neither reads the whole table.
+        let paths = [(String::from("path"), IndexType::BTree)];
+        keep_indexed(&mut files, &paths, &[], None, round).await?;
+        prune(&rows, keep.map(|keep| keep.rows))
+            .await
+            .context("prune the rows")?;
+        prune(&files, keep.map(|keep| keep.files))
+            .await
+            .context("prune the files")?;
         self.rows = Arc::new(rows);
         self.files = Arc::new(files);
         let scalar = [(String::from("id"), IndexType::BTree)];
         let vectors = [String::from(VECTOR)];
-        for dataset in self.texts.values_mut() {
+        for (column, dataset) in &mut self.texts {
             let mut texts = Dataset::clone(dataset);
             if wants_compaction(&texts) {
                 compact_files(&mut texts, options.clone(), None)
@@ -1033,7 +1081,12 @@ impl Table {
                     .context("compact the texts")?;
             }
             keep_indexed(&mut texts, &scalar, &vectors, self.shape.dimensions, round).await?;
-            prune(&texts).await.context("prune the texts")?;
+            prune(
+                &texts,
+                keep.and_then(|keep| keep.texts.get(column).copied()),
+            )
+            .await
+            .context("prune the texts")?;
             *dataset = Arc::new(texts);
         }
         Ok(())
@@ -1202,29 +1255,20 @@ async fn unindexed_rows(rows: &Dataset) -> Result<usize, Error> {
     Ok(most)
 }
 
-/// Prunes the versions of `dataset` replaced more than
-/// [`VERSION_LIFETIME`] ago: every version before the newest one whose
-/// successor is older than that. Lance prunes by a version's own creation
-/// time, which says nothing of when it was replaced, so the versions are
-/// named by number. Files a writer may still be making are never touched
+/// Prunes the versions of `dataset` before `keep`, the oldest one a reader
+/// may still open (see `generation`'s **Removal**); nothing when `keep` is
+/// `None`. Files a writer may still be making are never touched
 /// (`delete_unverified` stays off).
-async fn prune(dataset: &Dataset) -> Result<(), Error> {
-    let versions = dataset.versions().await.map_err(lance_fault)?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis() as i64);
-    let lifetime = VERSION_LIFETIME.as_millis() as i64;
-    let Some(before) = prunable(
-        versions
-            .iter()
-            .map(|version| (version.version, version.timestamp.timestamp_millis())),
-        now,
-        lifetime,
-    ) else {
+async fn prune(dataset: &Dataset, keep: Option<u64>) -> Result<(), Error> {
+    let Some(keep) = keep else {
         return Ok(());
     };
+    let versions = dataset.versions().await.map_err(lance_fault)?;
+    if !versions.iter().any(|version| version.version < keep) {
+        return Ok(());
+    }
     let policy = CleanupPolicy {
-        before_version: Some(before),
+        before_version: Some(keep),
         ..CleanupPolicy::default()
     };
     dataset
@@ -1232,22 +1276,6 @@ async fn prune(dataset: &Dataset) -> Result<(), Error> {
         .await
         .map_err(lance_fault)?;
     Ok(())
-}
-
-/// The first version to keep, of `versions` (number, creation time in
-/// milliseconds) at `now`: a version is pruned once its successor is older
-/// than `lifetime`. `None` when nothing is to be pruned.
-fn prunable(versions: impl Iterator<Item = (u64, i64)>, now: i64, lifetime: i64) -> Option<u64> {
-    let mut versions: Vec<(u64, i64)> = versions.collect();
-    versions.sort_unstable();
-    let mut keep_from = None;
-    for pair in versions.windows(2) {
-        let (successor, made) = pair[1];
-        if now - made > lifetime {
-            keep_from = Some(successor);
-        }
-    }
-    keep_from
 }
 
 /// The string column `name` of `batch`.
@@ -1294,8 +1322,6 @@ mod tests {
     use lance_index::scalar::FullTextSearchQuery;
 
     use super::*;
-
-    const HOUR: i64 = 3_600_000;
 
     struct Scratch(PathBuf);
 
@@ -1374,7 +1400,7 @@ mod tests {
             })
             .collect();
         table.upsert(&rows).await.unwrap();
-        table.maintain(1).await.unwrap();
+        table.maintain(1, None).await.unwrap();
         let rows = Dataset::clone(&table.rows);
 
         let mut scanner = rows.scan();
@@ -1503,7 +1529,7 @@ mod tests {
             table.upsert(&rows).await.unwrap();
             // Compaction as the small fragments pile up, the indices made
             // at once and brought over the new rows every fiftieth.
-            table.maintain(round + 1).await.unwrap();
+            table.maintain(round + 1, None).await.unwrap();
             if round % 50 == 49 || round == 0 {
                 let titles = titles_of(&table.rows).await;
                 assert_eq!(titles.len(), 50, "round {round}");
@@ -1555,7 +1581,7 @@ mod tests {
             .map(|n| titled(n, &format!("a title of some length, number {n}")))
             .collect();
         table.upsert(&large).await.unwrap();
-        table.maintain(1).await.unwrap();
+        table.maintain(1, None).await.unwrap();
         assert_eq!(fragment_rows(&table.rows), vec![(20_000, 0)]);
         table
     }
@@ -1572,7 +1598,7 @@ mod tests {
                 .upsert(&[titled(30_000 + write, "a small write")])
                 .await
                 .unwrap();
-            table.maintain(2 + write as u64).await.unwrap();
+            table.maintain(2 + write as u64, None).await.unwrap();
             assert_eq!(
                 table.rows.get_fragments().len(),
                 2 + write,
@@ -1584,7 +1610,7 @@ mod tests {
             .upsert(&[titled(40_000, "the last small write")])
             .await
             .unwrap();
-        table.maintain(100).await.unwrap();
+        table.maintain(100, None).await.unwrap();
         assert_eq!(
             fragment_rows(&table.rows),
             vec![(20_000, 0), (SMALL_FRAGMENTS, 0)],
@@ -1615,38 +1641,242 @@ mod tests {
         // deletion file.
         let some: Vec<String> = (0..9_000).map(|n| format!("r{n:05}")).collect();
         table.delete_rows("id", &some).await.unwrap();
-        table.maintain(2).await.unwrap();
+        table.maintain(2, None).await.unwrap();
         assert_eq!(fragment_rows(&table.rows), vec![(20_000, 9_000)]);
         // Past it the fragment is written again with the rows it still has.
         let more: Vec<String> = (9_000..11_000).map(|n| format!("r{n:05}")).collect();
         table.delete_rows("id", &more).await.unwrap();
-        table.maintain(3).await.unwrap();
+        table.maintain(3, None).await.unwrap();
         assert_eq!(fragment_rows(&table.rows), vec![(9_000, 0)]);
         assert_eq!(titles_of(&table.rows).await.len(), 9_000);
     }
 
-    #[test]
-    fn a_version_is_pruned_once_its_successor_is_an_hour_old() {
-        let now = 10 * HOUR;
-        // v1 made long ago, replaced a moment ago by v2: v1 stays.
-        assert_eq!(
-            prunable([(1, 0), (2, now - 1_000)].into_iter(), now, HOUR),
-            None
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_prune_keeps_the_version_a_reader_may_open_and_every_later_one() {
+        let scratch = Scratch::new("prune");
+        let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
+        let mut made = Vec::new();
+        for n in 0..4 {
+            table.upsert(&[titled(n, "a title")]).await.unwrap();
+            made.push(table.versions().rows);
+        }
+        let path = scratch.0.join("t0.lance");
+        let rows = Dataset::open(path.to_str().unwrap()).await.unwrap();
+        // No `commit` named the table yet: nothing goes.
+        prune(&rows, None).await.unwrap();
+        assert!(rows.checkout_version(made[0]).await.is_ok());
+        prune(&rows, Some(made[1])).await.unwrap();
+        assert!(rows.checkout_version(made[0]).await.is_err());
+        for version in &made[1..] {
+            let read = rows.checkout_version(*version).await.unwrap();
+            assert!(!titles_of(&read).await.is_empty(), "version {version}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod memory {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::testing::{Memory, measured};
+
+    const DIMENSIONS: usize = 256;
+
+    /// What a round's peak may differ by between two tables. A Lance write
+    /// holds a buffer of 5 MiB for each file it writes, whatever it writes;
+    /// what is beyond it is of the round.
+    const PEAK_MARGIN: usize = 2 * 1024 * 1024;
+
+    /// What a round's allocations may differ by between a table of a
+    /// thousand rows and one of a hundred thousand: what Lance reads of a
+    /// table's metadata (its fragments, of 16 384 rows each, and its
+    /// indices) before it reads a row.
+    const ALLOCATED_MARGIN: u64 = 8 * 1024 * 1024;
+
+    fn vector_of(seed: usize) -> Vec<f32> {
+        let mut state = (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        (0..DIMENSIONS)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state % 1000) as f32 / 1000.0
+            })
+            .collect()
+    }
+
+    /// `kind` (a scalar index), `topic` (a `text` vector column), and
+    /// `phrasings` (a `text list` one).
+    fn shape() -> Shape {
+        let column = |name: &str, kind: Kind, scalar_index: bool, vector: bool| Column {
+            name: name.to_owned(),
+            kind,
+            scalar_index,
+            fts: false,
+            vector,
+        };
+        Shape {
+            columns: vec![
+                column("kind", Kind::Text, true, false),
+                column("topic", Kind::Text, false, true),
+                column("phrasings", Kind::TextList, false, true),
+            ],
+            vectors: vec![String::from("topic"), String::from("phrasings")],
+            dimensions: Some(DIMENSIONS as u32),
+        }
+    }
+
+    /// The row `n`, its texts and vectors made from `salt`.
+    fn row(n: usize, salt: usize) -> Row {
+        let id = format!("r{n:06}");
+        let embedding = |position: u32, seed: usize| Embedding {
+            position,
+            vector: vector_of(seed),
+            digest: format!("d{seed}"),
+        };
+        Row {
+            file: format!("notes/{id}"),
+            order: id.clone(),
+            id,
+            values: BTreeMap::from([
+                (String::from("kind"), Value::Text(format!("k{}", n % 7))),
+                (String::from("topic"), Value::Text(format!("t{n}-{salt}"))),
+            ]),
+            embeddings: BTreeMap::from([
+                (String::from("topic"), vec![embedding(0, n * 31 + salt)]),
+                (
+                    String::from("phrasings"),
+                    vec![
+                        embedding(0, n * 31 + salt + 7),
+                        embedding(1, n * 31 + salt + 8),
+                    ],
+                ),
+            ]),
+        }
+    }
+
+    /// A table of `rows` rows in the folder `t0` of `dir`, written in ten
+    /// parts whatever its size and maintained once, as a round leaves it;
+    /// the versions its `commit` would name.
+    async fn table_of(dir: &Path, rows: usize) -> Versions {
+        let mut table = Table::open(dir, "t0", shape(), None).await.unwrap();
+        let part = rows / 10;
+        for start in (0..rows).step_by(part) {
+            let chunk: Vec<Row> = (start..start + part).map(|n| row(n, 0)).collect();
+            table.rows = append(&table.rows, rows_batch(&table.shape, &chunk).unwrap())
+                .await
+                .unwrap();
+            let texts = table.texts.get_mut("phrasings").unwrap();
+            *texts = append(
+                texts,
+                texts_batch("phrasings", DIMENSIONS as u32, &chunk).unwrap(),
+            )
+            .await
+            .unwrap();
+            let files: Vec<(String, String)> = chunk
+                .iter()
+                .map(|row| (row.file.clone(), format!("b{}", row.id)))
+                .collect();
+            table.files = append(&table.files, files_batch(&files).unwrap())
+                .await
+                .unwrap();
+        }
+        table.written = true;
+        table.maintain(1, None).await.unwrap();
+        table.versions()
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let base = std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let dir = base.join(format!("scheda-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::testing::remove_when_the_test_ends(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The calls a round makes on a table for one changed Document: open
+    /// it at the committed versions, read the vectors it holds for the
+    /// Document, write its row and texts, record its file, and maintain.
+    async fn one_document(dir: &Path, committed: &Versions, rows: usize) -> Memory {
+        let changed = row(rows / 2, 1);
+        let ((), memory) = measured(async {
+            let mut table = Table::open(dir, "t0", shape(), Some(committed))
+                .await
+                .unwrap();
+            table
+                .embeddings(std::slice::from_ref(&changed.id))
+                .await
+                .unwrap();
+            table.delete_rows("id", &[]).await.unwrap();
+            table.upsert(std::slice::from_ref(&changed)).await.unwrap();
+            table
+                .put_files(&[(changed.file.clone(), String::from("b-changed"))])
+                .await
+                .unwrap();
+            table.maintain(2, Some(committed)).await.unwrap();
+        })
+        .await;
+        memory
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "measures the memory of the process: run alone, by the memory target"]
+    async fn a_round_of_one_document_costs_a_large_table_what_it_costs_a_small_one() {
+        let _alone = crate::testing::alone().await;
+        let mut costs = Vec::new();
+        for rows in [1_000, 100_000] {
+            let dir = scratch(&format!("round-memory-{rows}"));
+            let committed = table_of(&dir, rows).await;
+            let memory = one_document(&dir, &committed, rows).await;
+            eprintln!(
+                "a round of one Document in {rows} rows: peak {} KB, allocated {} KB",
+                memory.peak / 1024,
+                memory.allocated / 1024
+            );
+            costs.push(memory);
+        }
+        assert!(
+            costs[1].peak < costs[0].peak + PEAK_MARGIN,
+            "peak: {costs:?}"
         );
-        // Once v2 is an hour old, v1 goes: keep from v2.
-        assert_eq!(
-            prunable([(1, 0), (2, now - HOUR - 1)].into_iter(), now, HOUR),
-            Some(2)
+        assert!(
+            costs[1].allocated < costs[0].allocated + ALLOCATED_MARGIN,
+            "allocated: {costs:?}"
         );
-        // The newest version whose successor is old enough sets the line.
-        assert_eq!(
-            prunable(
-                [(1, 0), (2, HOUR), (3, 2 * HOUR), (4, now - 10)].into_iter(),
-                now,
-                HOUR
-            ),
-            Some(3)
-        );
-        assert_eq!(prunable([(7, 0)].into_iter(), now, HOUR), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "measures the memory of the process: run alone, by the memory target"]
+    async fn removing_ten_thousand_documents_holds_what_removing_a_hundred_holds() {
+        let _alone = crate::testing::alone().await;
+        const ROWS: usize = 100_000;
+        let dir = scratch("removal-memory");
+        let committed = table_of(&dir, ROWS).await;
+        let mut peaks = Vec::new();
+        for gone in [100, 10_000] {
+            let ids: Vec<String> = (0..gone).map(|n| format!("r{n:06}")).collect();
+            // As a round removes them: one call per portion of files it
+            // reads, then the maintenance of the table.
+            let ((), memory) = measured(async {
+                let mut table = Table::open(&dir, "t0", shape(), Some(&committed))
+                    .await
+                    .unwrap();
+                for portion in ids.chunks(crate::tables::BATCH) {
+                    table.delete_rows("id", portion).await.unwrap();
+                }
+                table.maintain(2, Some(&committed)).await.unwrap();
+            })
+            .await;
+            eprintln!(
+                "removing {gone} of {ROWS} rows: peak {} KB, allocated {} KB",
+                memory.peak / 1024,
+                memory.allocated / 1024
+            );
+            peaks.push(memory.peak);
+        }
+        assert!(peaks[1] < peaks[0] + PEAK_MARGIN, "{peaks:?}");
     }
 }

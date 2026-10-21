@@ -87,6 +87,26 @@ pub mod document_search {
                 super::super::super::super::__buffa::view::DocumentKeyView<'a>,
             >,
         ),
+        Vector(
+            ::buffa::alloc::boxed::Box<
+                super::super::super::super::__buffa::view::document_search::VectorView<
+                    'a,
+                >,
+            >,
+        ),
+    }
+}
+pub mod vector_item {
+    #[allow(unused_imports)]
+    use super::*;
+    #[derive(Clone, Debug)]
+    pub enum Item<'a> {
+        Vector(
+            ::buffa::alloc::boxed::Box<
+                super::super::super::super::__buffa::view::StoredVectorView<'a>,
+            >,
+        ),
+        Absent(&'a str),
     }
 }
 pub mod search_item {

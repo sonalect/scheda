@@ -3909,7 +3909,7 @@ pub struct DocumentSearch {
     /// Rank only the Documents this matches; both legs apply it before they
     /// rank. Unset: all in scope.
     ///
-    /// Field 3: `filter`
+    /// Field 4: `filter`
     #[serde(
         rename = "filter",
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
@@ -3917,7 +3917,7 @@ pub struct DocumentSearch {
     pub filter: ::buffa::MessageField<Filter, ::buffa::Inline<Filter>>,
     /// How many hits. Unset or 0: 10. No upper limit beyond the Index.
     ///
-    /// Field 4: `k`
+    /// Field 5: `k`
     #[serde(
         rename = "k",
         with = "::buffa::json_helpers::opt_uint32",
@@ -3926,7 +3926,7 @@ pub struct DocumentSearch {
     pub k: ::core::option::Option<u32>,
     /// Weight of the lexical leg. Unset: 1. Zero turns the leg off.
     ///
-    /// Field 5: `lexical_weight`
+    /// Field 6: `lexical_weight`
     #[serde(
         rename = "lexicalWeight",
         alias = "lexical_weight",
@@ -3936,7 +3936,7 @@ pub struct DocumentSearch {
     pub lexical_weight: ::core::option::Option<f64>,
     /// Weight of the vector leg. Unset: 1. Zero turns the leg off.
     ///
-    /// Field 6: `vector_weight`
+    /// Field 7: `vector_weight`
     #[serde(
         rename = "vectorWeight",
         alias = "vector_weight",
@@ -3944,11 +3944,41 @@ pub struct DocumentSearch {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub vector_weight: ::core::option::Option<f64>,
+    /// The vector leg compares the query with every vector the filter admits,
+    /// whatever index the table has (a full scan, in memory bounded by the
+    /// leg's depth, not by the table), so it finds the exact nearest, and
+    /// Documents at the same distance in `id` order: its hits depend only on
+    /// the Documents the Index holds and on the request. Unset: through the
+    /// vector index of a large table, which is faster and approximate in which
+    /// Documents it finds (another search, after writes moved the index, may
+    /// find others). Either way `vector_score` comes from the full vectors.
+    ///
+    /// Field 8: `exact`
+    #[serde(rename = "exact", skip_serializing_if = "::core::option::Option::is_none")]
+    pub exact: ::core::option::Option<bool>,
+    /// The vector leg finds only Documents whose `vector_score` is at least
+    /// this, nearest first, still cut by `offset` and `k`: a caller pages
+    /// through "every Document at least this close" with `offset`. The
+    /// lexical leg is not bounded; with `lexical_weight` 0, or a `vector`
+    /// subject, every hit is. Needs `exact`: through the vector index Lance
+    /// compares a bound with the index's own distances, not with the cosine
+    /// distance, and could not promise every Document anyway. Above 0, at
+    /// most 1. Unset: no bound.
+    ///
+    /// Field 9: `min_vector_score`
+    #[serde(
+        rename = "minVectorScore",
+        alias = "min_vector_score",
+        with = "::buffa::json_helpers::opt_double",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub min_vector_score: ::core::option::Option<f64>,
     /// Rerank the first this many fused hits with the Vault's reranker; set
     /// without one, `INVALID_ARGUMENT`. Below the effective `k`,
-    /// `INVALID_ARGUMENT`. Unset: no rerank.
+    /// `INVALID_ARGUMENT`. With a `vector` subject, `INVALID_ARGUMENT`: the
+    /// reranker scores against a text. Unset: no rerank.
     ///
-    /// Field 7: `rerank_limit`
+    /// Field 10: `rerank_limit`
     #[serde(
         rename = "rerankLimit",
         alias = "rerank_limit",
@@ -3958,7 +3988,7 @@ pub struct DocumentSearch {
     pub rerank_limit: ::core::option::Option<u32>,
     /// Fill the `raw` of each hit's Document.
     ///
-    /// Field 8: `include_raw`
+    /// Field 11: `include_raw`
     #[serde(
         rename = "includeRaw",
         alias = "include_raw",
@@ -3967,9 +3997,10 @@ pub struct DocumentSearch {
     pub include_raw: ::core::option::Option<bool>,
     /// Skip this many hits first; their files are not opened. A second
     /// search ranks again, so its page need not follow the first one's:
-    /// pages that must agree come from one search with a large enough `k`.
+    /// pages that must agree come from one search with a large enough `k`,
+    /// or from searches that are `exact`.
     ///
-    /// Field 9: `offset`
+    /// Field 12: `offset`
     #[serde(
         rename = "offset",
         with = "::buffa::json_helpers::opt_uint32",
@@ -3978,7 +4009,7 @@ pub struct DocumentSearch {
     pub offset: ::core::option::Option<u32>,
     /// As `DocumentQuery.not_before`.
     ///
-    /// Field 10: `not_before`
+    /// Field 13: `not_before`
     #[serde(
         rename = "notBefore",
         alias = "not_before",
@@ -3998,6 +4029,8 @@ impl ::core::fmt::Debug for DocumentSearch {
             .field("k", &self.k)
             .field("lexical_weight", &self.lexical_weight)
             .field("vector_weight", &self.vector_weight)
+            .field("exact", &self.exact)
+            .field("min_vector_score", &self.min_vector_score)
             .field("rerank_limit", &self.rerank_limit)
             .field("include_raw", &self.include_raw)
             .field("offset", &self.offset)
@@ -4033,6 +4066,20 @@ impl DocumentSearch {
     ///Sets [`Self::vector_weight`] to `Some(value)`, consuming and returning `self`.
     pub fn with_vector_weight(mut self, value: f64) -> Self {
         self.vector_weight = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::exact`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_exact(mut self, value: bool) -> Self {
+        self.exact = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::min_vector_score`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_min_vector_score(mut self, value: f64) -> Self {
+        self.min_vector_score = Some(value);
         self
     }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
@@ -4100,6 +4147,14 @@ impl ::buffa::Message for DocumentSearch {
                         += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
                             + inner as u64;
                 }
+                __buffa::oneof::document_search::Subject::Vector(x) => {
+                    let __slot = __cache.reserve();
+                    let inner = x.compute_size(__cache);
+                    __cache.set(__slot, inner);
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
+                            + inner as u64;
+                }
             }
         }
         if self.filter.is_set() {
@@ -4117,6 +4172,12 @@ impl ::buffa::Message for DocumentSearch {
             size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
         }
         if self.vector_weight.is_some() {
+            size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
+        }
+        if self.exact.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
+        if self.min_vector_score.is_some() {
             size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
         }
         if let Some(v) = self.rerank_limit {
@@ -4154,36 +4215,50 @@ impl ::buffa::Message for DocumentSearch {
                     );
                     x.write_to(__cache, buf);
                 }
+                __buffa::oneof::document_search::Subject::Vector(x) => {
+                    ::buffa::types::put_len_delimited_header(
+                        3u32,
+                        u64::from(__cache.consume_next()),
+                        buf,
+                    );
+                    x.write_to(__cache, buf);
+                }
             }
         }
         if self.filter.is_set() {
             ::buffa::types::put_len_delimited_header(
-                3u32,
+                4u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
             self.filter.write_to(__cache, buf);
         }
         if let Some(v) = self.k {
-            ::buffa::types::put_uint32_field(4u32, v, buf);
+            ::buffa::types::put_uint32_field(5u32, v, buf);
         }
         if let Some(v) = self.lexical_weight {
-            ::buffa::types::put_double_field(5u32, v, buf);
-        }
-        if let Some(v) = self.vector_weight {
             ::buffa::types::put_double_field(6u32, v, buf);
         }
-        if let Some(v) = self.rerank_limit {
-            ::buffa::types::put_uint32_field(7u32, v, buf);
+        if let Some(v) = self.vector_weight {
+            ::buffa::types::put_double_field(7u32, v, buf);
         }
-        if let Some(v) = self.include_raw {
+        if let Some(v) = self.exact {
             ::buffa::types::put_bool_field(8u32, v, buf);
         }
+        if let Some(v) = self.min_vector_score {
+            ::buffa::types::put_double_field(9u32, v, buf);
+        }
+        if let Some(v) = self.rerank_limit {
+            ::buffa::types::put_uint32_field(10u32, v, buf);
+        }
+        if let Some(v) = self.include_raw {
+            ::buffa::types::put_bool_field(11u32, v, buf);
+        }
         if let Some(v) = self.offset {
-            ::buffa::types::put_uint32_field(9u32, v, buf);
+            ::buffa::types::put_uint32_field(12u32, v, buf);
         }
         if let Some(ref v) = self.not_before {
-            ::buffa::types::put_string_field(10u32, v, buf);
+            ::buffa::types::put_string_field(13u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -4234,13 +4309,33 @@ impl ::buffa::Message for DocumentSearch {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
+                if let ::core::option::Option::Some(
+                    __buffa::oneof::document_search::Subject::Vector(ref mut existing),
+                ) = self.subject
+                {
+                    ::buffa::Message::merge_length_delimited(&mut **existing, buf, ctx)?;
+                } else {
+                    let mut val = ::core::default::Default::default();
+                    ::buffa::Message::merge_length_delimited(&mut val, buf, ctx)?;
+                    self.subject = ::core::option::Option::Some(
+                        __buffa::oneof::document_search::Subject::Vector(
+                            ::buffa::alloc::boxed::Box::new(val),
+                        ),
+                    );
+                }
+            }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
                 ::buffa::Message::merge_length_delimited(
                     self.filter.get_or_insert_default(),
                     buf,
                     ctx,
                 )?;
             }
-            4u32 => {
+            5u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -4249,7 +4344,7 @@ impl ::buffa::Message for DocumentSearch {
                     ::buffa::types::decode_uint32(buf)?,
                 );
             }
-            5u32 => {
+            6u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Fixed64,
@@ -4258,7 +4353,7 @@ impl ::buffa::Message for DocumentSearch {
                     ::buffa::types::decode_double(buf)?,
                 );
             }
-            6u32 => {
+            7u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Fixed64,
@@ -4267,7 +4362,25 @@ impl ::buffa::Message for DocumentSearch {
                     ::buffa::types::decode_double(buf)?,
                 );
             }
-            7u32 => {
+            8u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.exact = ::core::option::Option::Some(
+                    ::buffa::types::decode_bool(buf)?,
+                );
+            }
+            9u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Fixed64,
+                )?;
+                self.min_vector_score = ::core::option::Option::Some(
+                    ::buffa::types::decode_double(buf)?,
+                );
+            }
+            10u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -4276,7 +4389,7 @@ impl ::buffa::Message for DocumentSearch {
                     ::buffa::types::decode_uint32(buf)?,
                 );
             }
-            8u32 => {
+            11u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -4285,7 +4398,7 @@ impl ::buffa::Message for DocumentSearch {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
-            9u32 => {
+            12u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -4294,7 +4407,7 @@ impl ::buffa::Message for DocumentSearch {
                     ::buffa::types::decode_uint32(buf)?,
                 );
             }
-            10u32 => {
+            13u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -4319,6 +4432,8 @@ impl ::buffa::Message for DocumentSearch {
         self.k = ::core::option::Option::None;
         self.lexical_weight = ::core::option::Option::None;
         self.vector_weight = ::core::option::Option::None;
+        self.exact = ::core::option::Option::None;
+        self.min_vector_score = ::core::option::Option::None;
         self.rerank_limit = ::core::option::Option::None;
         self.include_raw = ::core::option::Option::None;
         self.offset = ::core::option::Option::None;
@@ -4361,6 +4476,12 @@ impl<'de> ::serde::Deserialize<'de> for DocumentSearch {
                     ::core::option::Option<f64>,
                 > = None;
                 let mut __f_vector_weight: ::core::option::Option<
+                    ::core::option::Option<f64>,
+                > = None;
+                let mut __f_exact: ::core::option::Option<
+                    ::core::option::Option<bool>,
+                > = None;
+                let mut __f_min_vector_score: ::core::option::Option<
                     ::core::option::Option<f64>,
                 > = None;
                 let mut __f_rerank_limit: ::core::option::Option<
@@ -4426,6 +4547,29 @@ impl<'de> ::serde::Deserialize<'de> for DocumentSearch {
                         }
                         "vectorWeight" | "vector_weight" => {
                             __f_vector_weight = Some({
+                                struct _S;
+                                impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
+                                    type Value = ::core::option::Option<f64>;
+                                    fn deserialize<D: ::serde::Deserializer<'de>>(
+                                        self,
+                                        d: D,
+                                    ) -> ::core::result::Result<
+                                        ::core::option::Option<f64>,
+                                        D::Error,
+                                    > {
+                                        ::buffa::json_helpers::opt_double::deserialize(d)
+                                    }
+                                }
+                                map.next_value_seed(_S)?
+                            });
+                        }
+                        "exact" => {
+                            __f_exact = Some(
+                                map.next_value::<::core::option::Option<bool>>()?,
+                            );
+                        }
+                        "minVectorScore" | "min_vector_score" => {
+                            __f_min_vector_score = Some({
                                 struct _S;
                                 impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                     type Value = ::core::option::Option<f64>;
@@ -4539,6 +4683,30 @@ impl<'de> ::serde::Deserialize<'de> for DocumentSearch {
                                 );
                             }
                         }
+                        "vector" => {
+                            let v: ::core::option::Option<document_search::Vector> = map
+                                .next_value_seed(
+                                    ::buffa::json_helpers::NullableDeserializeSeed(
+                                        ::buffa::json_helpers::DefaultDeserializeSeed::<
+                                            document_search::Vector,
+                                        >::new(),
+                                    ),
+                                )?;
+                            if let Some(v) = v {
+                                if __oneof_subject.is_some() {
+                                    return Err(
+                                        ::serde::de::Error::custom(
+                                            "multiple oneof fields set for 'subject'",
+                                        ),
+                                    );
+                                }
+                                __oneof_subject = Some(
+                                    __buffa::oneof::document_search::Subject::Vector(
+                                        ::buffa::alloc::boxed::Box::new(v),
+                                    ),
+                                );
+                            }
+                        }
                         _ => {
                             map.next_value::<::serde::de::IgnoredAny>()?;
                         }
@@ -4556,6 +4724,12 @@ impl<'de> ::serde::Deserialize<'de> for DocumentSearch {
                 }
                 if let ::core::option::Option::Some(v) = __f_vector_weight {
                     __r.vector_weight = v;
+                }
+                if let ::core::option::Option::Some(v) = __f_exact {
+                    __r.exact = v;
+                }
+                if let ::core::option::Option::Some(v) = __f_min_vector_score {
+                    __r.min_vector_score = v;
                 }
                 if let ::core::option::Option::Some(v) = __f_rerank_limit {
                     __r.rerank_limit = v;
@@ -4599,11 +4773,964 @@ pub const __DOCUMENT_SEARCH_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::b
 pub mod document_search {
     #[allow(unused_imports)]
     use super::*;
+    /// A vector the caller made, and the `vector` column it is compared with.
+    #[derive(Clone, PartialEq, Default)]
+    #[derive(::serde::Serialize, ::serde::Deserialize)]
+    #[serde(default)]
+    pub struct Vector {
+        /// A `vector` column the Projector declares for a collection in scope.
+        ///
+        /// Field 1: `column`
+        #[serde(
+            rename = "column",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub column: ::core::option::Option<::buffa::alloc::string::String>,
+        /// The vector: as many values as the column's vectors have, each
+        /// finite, not all 0. It must come from the embedding space of the
+        /// column (the Vault's embedder, or the same model): only its length
+        /// can be checked.
+        ///
+        /// Field 2: `values`
+        #[serde(
+            rename = "values",
+            with = "::buffa::json_helpers::proto_seq",
+            skip_serializing_if = "::buffa::json_helpers::skip_if::is_empty_vec"
+        )]
+        pub values: ::buffa::alloc::vec::Vec<f32>,
+        #[serde(skip)]
+        #[doc(hidden)]
+        pub __buffa_unknown_fields: ::buffa::UnknownFields,
+    }
+    impl ::core::fmt::Debug for Vector {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+            f.debug_struct("Vector")
+                .field("column", &self.column)
+                .field("values", &self.values)
+                .finish()
+        }
+    }
+    impl Vector {
+        /// Protobuf type URL for this message, for use with `Any::pack` and
+        /// `Any::unpack_if`.
+        ///
+        /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+        pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentSearch.Vector";
+    }
+    impl Vector {
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::column`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_column(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.column = Some(value.into());
+            self
+        }
+    }
+    ::buffa::impl_default_instance!(Vector);
+    impl ::buffa::MessageName for Vector {
+        const PACKAGE: &'static str = "scheda.v1";
+        const NAME: &'static str = "DocumentSearch.Vector";
+        const FULL_NAME: &'static str = "scheda.v1.DocumentSearch.Vector";
+        const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentSearch.Vector";
+    }
+    impl ::buffa::Message for Vector {
+        /// Returns the total encoded size in bytes.
+        ///
+        /// Accumulates in `u64` (which cannot overflow for in-memory
+        /// data) and saturates to `u32` at return, so a message whose
+        /// encoded size exceeds the 2 GiB protobuf limit yields a value
+        /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+        /// points reject, never a silently wrapped size.
+        #[allow(clippy::let_and_return)]
+        fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+            #[allow(unused_imports)]
+            use ::buffa::Enumeration as _;
+            let mut size = 0u64;
+            if let Some(ref v) = self.column {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
+            if !self.values.is_empty() {
+                let payload: u64 = self.values.len() as u64
+                    * ::buffa::types::FIXED32_ENCODED_LEN as u64;
+                size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+            }
+            size += self.__buffa_unknown_fields.encoded_len() as u64;
+            ::buffa::saturate_size(size)
+        }
+        fn write_to(
+            &self,
+            _cache: &mut ::buffa::SizeCache,
+            buf: &mut impl ::buffa::EncodeSink,
+        ) {
+            #[allow(unused_imports)]
+            use ::buffa::Enumeration as _;
+            if let Some(ref v) = self.column {
+                ::buffa::types::put_string_field(1u32, v, buf);
+            }
+            if !self.values.is_empty() {
+                let payload: u64 = self.values.len() as u64
+                    * ::buffa::types::FIXED32_ENCODED_LEN as u64;
+                ::buffa::types::put_len_delimited_header(2u32, payload, buf);
+                for &v in &self.values {
+                    ::buffa::types::encode_float(v, buf);
+                }
+            }
+            self.__buffa_unknown_fields.write_to(buf);
+        }
+        fn merge_field(
+            &mut self,
+            tag: ::buffa::encoding::Tag,
+            buf: &mut impl ::buffa::bytes::Buf,
+            ctx: ::buffa::DecodeContext<'_>,
+        ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+            #[allow(unused_imports)]
+            use ::buffa::bytes::Buf as _;
+            #[allow(unused_imports)]
+            use ::buffa::Enumeration as _;
+            match tag.field_number() {
+                1u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .column
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
+                2u32 => {
+                    if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                        let len = ::buffa::encoding::decode_varint(buf)?;
+                        let len = usize::try_from(len)
+                            .map_err(|_| ::buffa::DecodeError::MessageTooLarge)?;
+                        if buf.remaining() < len {
+                            return ::core::result::Result::Err(
+                                ::buffa::DecodeError::UnexpectedEof,
+                            );
+                        }
+                        if buf.chunk().len() >= len {
+                            ::buffa::types::extend_packed_float(
+                                &buf.chunk()[..len],
+                                &mut self.values,
+                            )?;
+                            buf.advance(len);
+                        } else {
+                            self.values.reserve(len / 4usize);
+                            let mut limited = buf.take(len);
+                            while limited.has_remaining() {
+                                self.values
+                                    .push(::buffa::types::decode_float(&mut limited)?);
+                            }
+                            let leftover = limited.remaining();
+                            if leftover > 0 {
+                                limited.advance(leftover);
+                            }
+                        }
+                    } else if tag.wire_type() == ::buffa::encoding::WireType::Fixed32 {
+                        self.values.push(::buffa::types::decode_float(buf)?);
+                    } else {
+                        return ::core::result::Result::Err(
+                            ::buffa::encoding::wire_type_mismatch(
+                                tag,
+                                ::buffa::encoding::WireType::LengthDelimited,
+                            ),
+                        );
+                    }
+                }
+                _ => {
+                    self.__buffa_unknown_fields
+                        .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
+                }
+            }
+            ::core::result::Result::Ok(())
+        }
+        fn clear(&mut self) {
+            self.column = ::core::option::Option::None;
+            self.values.clear();
+            self.__buffa_unknown_fields.clear();
+        }
+    }
+    impl ::buffa::ExtensionSet for Vector {
+        const PROTO_FQN: &'static str = "scheda.v1.DocumentSearch.Vector";
+        fn unknown_fields(&self) -> &::buffa::UnknownFields {
+            &self.__buffa_unknown_fields
+        }
+        fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
+            &mut self.__buffa_unknown_fields
+        }
+    }
+    impl ::buffa::json_helpers::ProtoElemJson for Vector {
+        fn serialize_proto_json<S: ::serde::Serializer>(
+            v: &Self,
+            s: S,
+        ) -> ::core::result::Result<S::Ok, S::Error> {
+            ::serde::Serialize::serialize(v, s)
+        }
+        fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+            d: D,
+        ) -> ::core::result::Result<Self, D::Error> {
+            <Self as ::serde::Deserialize>::deserialize(d)
+        }
+    }
+    #[doc(hidden)]
+    pub const __VECTOR_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
+        type_url: "type.googleapis.com/scheda.v1.DocumentSearch.Vector",
+        to_json: ::buffa::type_registry::any_to_json::<Vector>,
+        from_json: ::buffa::type_registry::any_from_json::<Vector>,
+        is_wkt: false,
+    };
     #[doc(inline)]
     pub use super::__buffa::oneof::document_search::Subject;
     #[doc(inline)]
+    pub use super::__buffa::view::document_search::VectorView;
+    #[doc(inline)]
+    pub use super::__buffa::view::document_search::VectorOwnedView;
+    #[doc(inline)]
     pub use super::__buffa::view::oneof::document_search::Subject as SubjectView;
 }
+/// The request of `Collection.GetVectors`.
+#[derive(Clone, PartialEq, Default)]
+#[derive(::serde::Serialize, ::serde::Deserialize)]
+#[serde(default)]
+pub struct VectorSelection {
+    /// A `vector` column the Projector declares for the collection.
+    ///
+    /// Field 1: `column`
+    #[serde(rename = "column", skip_serializing_if = "::core::option::Option::is_none")]
+    pub column: ::core::option::Option<::buffa::alloc::string::String>,
+    /// The Documents, in the order their vectors come; an id given twice
+    /// comes twice. At least one.
+    ///
+    /// Field 2: `ids`
+    #[serde(
+        rename = "ids",
+        skip_serializing_if = "::buffa::json_helpers::skip_if::is_empty_vec",
+        deserialize_with = "::buffa::json_helpers::null_as_default"
+    )]
+    pub ids: ::buffa::alloc::vec::Vec<::buffa::alloc::string::String>,
+    /// As `DocumentQuery.not_before`.
+    ///
+    /// Field 3: `not_before`
+    #[serde(
+        rename = "notBefore",
+        alias = "not_before",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub not_before: ::core::option::Option<::buffa::alloc::string::String>,
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub __buffa_unknown_fields: ::buffa::UnknownFields,
+}
+impl ::core::fmt::Debug for VectorSelection {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("VectorSelection")
+            .field("column", &self.column)
+            .field("ids", &self.ids)
+            .field("not_before", &self.not_before)
+            .finish()
+    }
+}
+impl VectorSelection {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.VectorSelection";
+}
+impl VectorSelection {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::column`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_column(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.column = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::not_before`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_not_before(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.not_before = Some(value.into());
+        self
+    }
+}
+::buffa::impl_default_instance!(VectorSelection);
+impl ::buffa::MessageName for VectorSelection {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "VectorSelection";
+    const FULL_NAME: &'static str = "scheda.v1.VectorSelection";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.VectorSelection";
+}
+impl ::buffa::Message for VectorSelection {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let Some(ref v) = self.column {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        for v in &self.ids {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.not_before {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let Some(ref v) = self.column {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        for v in &self.ids {
+            ::buffa::types::put_string_field(2u32, v, buf);
+        }
+        if let Some(ref v) = self.not_before {
+            ::buffa::types::put_string_field(3u32, v, buf);
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self.column.get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __elem = ::buffa::types::decode_string(buf)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
+                )?;
+                self.ids.push(__elem);
+            }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self
+                        .not_before
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
+            _ => {
+                self.__buffa_unknown_fields
+                    .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.column = ::core::option::Option::None;
+        self.ids.clear();
+        self.not_before = ::core::option::Option::None;
+        self.__buffa_unknown_fields.clear();
+    }
+}
+impl ::buffa::ExtensionSet for VectorSelection {
+    const PROTO_FQN: &'static str = "scheda.v1.VectorSelection";
+    fn unknown_fields(&self) -> &::buffa::UnknownFields {
+        &self.__buffa_unknown_fields
+    }
+    fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
+        &mut self.__buffa_unknown_fields
+    }
+}
+impl ::buffa::json_helpers::ProtoElemJson for VectorSelection {
+    fn serialize_proto_json<S: ::serde::Serializer>(
+        v: &Self,
+        s: S,
+    ) -> ::core::result::Result<S::Ok, S::Error> {
+        ::serde::Serialize::serialize(v, s)
+    }
+    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        <Self as ::serde::Deserialize>::deserialize(d)
+    }
+}
+#[doc(hidden)]
+pub const __VECTOR_SELECTION_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
+    type_url: "type.googleapis.com/scheda.v1.VectorSelection",
+    to_json: ::buffa::type_registry::any_to_json::<VectorSelection>,
+    from_json: ::buffa::type_registry::any_from_json::<VectorSelection>,
+    is_wkt: false,
+};
+/// One item of `Collection.GetVectors`.
+#[derive(Clone, PartialEq, Default)]
+#[derive(::serde::Serialize)]
+#[serde(default)]
+pub struct VectorItem {
+    #[serde(flatten)]
+    pub item: ::core::option::Option<__buffa::oneof::vector_item::Item>,
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub __buffa_unknown_fields: ::buffa::UnknownFields,
+}
+impl ::core::fmt::Debug for VectorItem {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("VectorItem").field("item", &self.item).finish()
+    }
+}
+impl VectorItem {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.VectorItem";
+}
+::buffa::impl_default_instance!(VectorItem);
+impl ::buffa::MessageName for VectorItem {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "VectorItem";
+    const FULL_NAME: &'static str = "scheda.v1.VectorItem";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.VectorItem";
+}
+impl ::buffa::Message for VectorItem {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let ::core::option::Option::Some(ref v) = self.item {
+            match v {
+                __buffa::oneof::vector_item::Item::Vector(x) => {
+                    let __slot = __cache.reserve();
+                    let inner = x.compute_size(__cache);
+                    __cache.set(__slot, inner);
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
+                            + inner as u64;
+                }
+                __buffa::oneof::vector_item::Item::Absent(x) => {
+                    size += 1u64 + ::buffa::types::string_encoded_len(x) as u64;
+                }
+            }
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        __cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let ::core::option::Option::Some(ref v) = self.item {
+            match v {
+                __buffa::oneof::vector_item::Item::Vector(x) => {
+                    ::buffa::types::put_len_delimited_header(
+                        1u32,
+                        u64::from(__cache.consume_next()),
+                        buf,
+                    );
+                    x.write_to(__cache, buf);
+                }
+                __buffa::oneof::vector_item::Item::Absent(x) => {
+                    ::buffa::types::put_string_field(2u32, x, buf);
+                }
+            }
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                if let ::core::option::Option::Some(
+                    __buffa::oneof::vector_item::Item::Vector(ref mut existing),
+                ) = self.item
+                {
+                    ::buffa::Message::merge_length_delimited(&mut **existing, buf, ctx)?;
+                } else {
+                    let mut val = ::core::default::Default::default();
+                    ::buffa::Message::merge_length_delimited(&mut val, buf, ctx)?;
+                    self.item = ::core::option::Option::Some(
+                        __buffa::oneof::vector_item::Item::Vector(
+                            ::buffa::alloc::boxed::Box::new(val),
+                        ),
+                    );
+                }
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                self.item = ::core::option::Option::Some(
+                    __buffa::oneof::vector_item::Item::Absent(
+                        ::buffa::types::decode_string(buf)?,
+                    ),
+                );
+            }
+            _ => {
+                self.__buffa_unknown_fields
+                    .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.item = ::core::option::Option::None;
+        self.__buffa_unknown_fields.clear();
+    }
+}
+impl ::buffa::ExtensionSet for VectorItem {
+    const PROTO_FQN: &'static str = "scheda.v1.VectorItem";
+    fn unknown_fields(&self) -> &::buffa::UnknownFields {
+        &self.__buffa_unknown_fields
+    }
+    fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
+        &mut self.__buffa_unknown_fields
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for VectorItem {
+    fn deserialize<D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        struct _V;
+        impl<'de> ::serde::de::Visitor<'de> for _V {
+            type Value = VectorItem;
+            fn expecting(
+                &self,
+                f: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
+                f.write_str("struct VectorItem")
+            }
+            #[allow(clippy::field_reassign_with_default)]
+            fn visit_map<A: ::serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> ::core::result::Result<VectorItem, A::Error> {
+                let mut __oneof_item: ::core::option::Option<
+                    __buffa::oneof::vector_item::Item,
+                > = None;
+                while let Some(key) = map.next_key::<::buffa::alloc::string::String>()? {
+                    match key.as_str() {
+                        "vector" => {
+                            let v: ::core::option::Option<StoredVector> = map
+                                .next_value_seed(
+                                    ::buffa::json_helpers::NullableDeserializeSeed(
+                                        ::buffa::json_helpers::DefaultDeserializeSeed::<
+                                            StoredVector,
+                                        >::new(),
+                                    ),
+                                )?;
+                            if let Some(v) = v {
+                                if __oneof_item.is_some() {
+                                    return Err(
+                                        ::serde::de::Error::custom(
+                                            "multiple oneof fields set for 'item'",
+                                        ),
+                                    );
+                                }
+                                __oneof_item = Some(
+                                    __buffa::oneof::vector_item::Item::Vector(
+                                        ::buffa::alloc::boxed::Box::new(v),
+                                    ),
+                                );
+                            }
+                        }
+                        "absent" => {
+                            let v: ::core::option::Option<
+                                ::buffa::alloc::string::String,
+                            > = map
+                                .next_value_seed(
+                                    ::buffa::json_helpers::NullableDeserializeSeed(
+                                        ::buffa::json_helpers::DefaultDeserializeSeed::<
+                                            ::buffa::alloc::string::String,
+                                        >::new(),
+                                    ),
+                                )?;
+                            if let Some(v) = v {
+                                if __oneof_item.is_some() {
+                                    return Err(
+                                        ::serde::de::Error::custom(
+                                            "multiple oneof fields set for 'item'",
+                                        ),
+                                    );
+                                }
+                                __oneof_item = Some(
+                                    __buffa::oneof::vector_item::Item::Absent(v),
+                                );
+                            }
+                        }
+                        _ => {
+                            map.next_value::<::serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                let mut __r = <VectorItem as ::core::default::Default>::default();
+                __r.item = __oneof_item;
+                Ok(__r)
+            }
+        }
+        d.deserialize_map(_V)
+    }
+}
+impl ::buffa::json_helpers::ProtoElemJson for VectorItem {
+    fn serialize_proto_json<S: ::serde::Serializer>(
+        v: &Self,
+        s: S,
+    ) -> ::core::result::Result<S::Ok, S::Error> {
+        ::serde::Serialize::serialize(v, s)
+    }
+    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        <Self as ::serde::Deserialize>::deserialize(d)
+    }
+}
+#[doc(hidden)]
+pub const __VECTOR_ITEM_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
+    type_url: "type.googleapis.com/scheda.v1.VectorItem",
+    to_json: ::buffa::type_registry::any_to_json::<VectorItem>,
+    from_json: ::buffa::type_registry::any_from_json::<VectorItem>,
+    is_wkt: false,
+};
+pub mod vector_item {
+    #[allow(unused_imports)]
+    use super::*;
+    #[doc(inline)]
+    pub use super::__buffa::oneof::vector_item::Item;
+    #[doc(inline)]
+    pub use super::__buffa::view::oneof::vector_item::Item as ItemView;
+}
+/// One vector of a Document, as the Index stored it.
+#[derive(Clone, PartialEq, Default)]
+#[derive(::serde::Serialize, ::serde::Deserialize)]
+#[serde(default)]
+pub struct StoredVector {
+    /// The Document.
+    ///
+    /// Field 1: `id`
+    #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
+    pub id: ::core::option::Option<::buffa::alloc::string::String>,
+    /// The place of its text in the column's `text list`, from 0; 0 in a
+    /// `text` column. A text without a vector has no item.
+    ///
+    /// Field 2: `position`
+    #[serde(
+        rename = "position",
+        with = "::buffa::json_helpers::opt_uint32",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub position: ::core::option::Option<u32>,
+    /// The git blob id of the text the vector was made from (`git
+    /// hash-object` of its UTF-8 bytes): the same as that of the text the
+    /// caller holds now when the vector is of that text, not of one the Index
+    /// has not caught up on.
+    ///
+    /// Field 3: `digest`
+    #[serde(rename = "digest", skip_serializing_if = "::core::option::Option::is_none")]
+    pub digest: ::core::option::Option<::buffa::alloc::string::String>,
+    /// The vector, as the embedder gave it.
+    ///
+    /// Field 4: `values`
+    #[serde(
+        rename = "values",
+        with = "::buffa::json_helpers::proto_seq",
+        skip_serializing_if = "::buffa::json_helpers::skip_if::is_empty_vec"
+    )]
+    pub values: ::buffa::alloc::vec::Vec<f32>,
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub __buffa_unknown_fields: ::buffa::UnknownFields,
+}
+impl ::core::fmt::Debug for StoredVector {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("StoredVector")
+            .field("id", &self.id)
+            .field("position", &self.position)
+            .field("digest", &self.digest)
+            .field("values", &self.values)
+            .finish()
+    }
+}
+impl StoredVector {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.StoredVector";
+}
+impl StoredVector {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::id`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_id(mut self, value: impl Into<::buffa::alloc::string::String>) -> Self {
+        self.id = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::position`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_position(mut self, value: u32) -> Self {
+        self.position = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::digest`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_digest(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.digest = Some(value.into());
+        self
+    }
+}
+::buffa::impl_default_instance!(StoredVector);
+impl ::buffa::MessageName for StoredVector {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "StoredVector";
+    const FULL_NAME: &'static str = "scheda.v1.StoredVector";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.StoredVector";
+}
+impl ::buffa::Message for StoredVector {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(v) = self.position {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.digest {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if !self.values.is_empty() {
+            let payload: u64 = self.values.len() as u64
+                * ::buffa::types::FIXED32_ENCODED_LEN as u64;
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(v) = self.position {
+            ::buffa::types::put_uint32_field(2u32, v, buf);
+        }
+        if let Some(ref v) = self.digest {
+            ::buffa::types::put_string_field(3u32, v, buf);
+        }
+        if !self.values.is_empty() {
+            let payload: u64 = self.values.len() as u64
+                * ::buffa::types::FIXED32_ENCODED_LEN as u64;
+            ::buffa::types::put_len_delimited_header(4u32, payload, buf);
+            for &v in &self.values {
+                ::buffa::types::encode_float(v, buf);
+            }
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self.id.get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.position = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint32(buf)?,
+                );
+            }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self.digest.get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
+            4u32 => {
+                if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                    let len = ::buffa::encoding::decode_varint(buf)?;
+                    let len = usize::try_from(len)
+                        .map_err(|_| ::buffa::DecodeError::MessageTooLarge)?;
+                    if buf.remaining() < len {
+                        return ::core::result::Result::Err(
+                            ::buffa::DecodeError::UnexpectedEof,
+                        );
+                    }
+                    if buf.chunk().len() >= len {
+                        ::buffa::types::extend_packed_float(
+                            &buf.chunk()[..len],
+                            &mut self.values,
+                        )?;
+                        buf.advance(len);
+                    } else {
+                        self.values.reserve(len / 4usize);
+                        let mut limited = buf.take(len);
+                        while limited.has_remaining() {
+                            self.values
+                                .push(::buffa::types::decode_float(&mut limited)?);
+                        }
+                        let leftover = limited.remaining();
+                        if leftover > 0 {
+                            limited.advance(leftover);
+                        }
+                    }
+                } else if tag.wire_type() == ::buffa::encoding::WireType::Fixed32 {
+                    self.values.push(::buffa::types::decode_float(buf)?);
+                } else {
+                    return ::core::result::Result::Err(
+                        ::buffa::encoding::wire_type_mismatch(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        ),
+                    );
+                }
+            }
+            _ => {
+                self.__buffa_unknown_fields
+                    .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.id = ::core::option::Option::None;
+        self.position = ::core::option::Option::None;
+        self.digest = ::core::option::Option::None;
+        self.values.clear();
+        self.__buffa_unknown_fields.clear();
+    }
+}
+impl ::buffa::ExtensionSet for StoredVector {
+    const PROTO_FQN: &'static str = "scheda.v1.StoredVector";
+    fn unknown_fields(&self) -> &::buffa::UnknownFields {
+        &self.__buffa_unknown_fields
+    }
+    fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
+        &mut self.__buffa_unknown_fields
+    }
+}
+impl ::buffa::json_helpers::ProtoElemJson for StoredVector {
+    fn serialize_proto_json<S: ::serde::Serializer>(
+        v: &Self,
+        s: S,
+    ) -> ::core::result::Result<S::Ok, S::Error> {
+        ::serde::Serialize::serialize(v, s)
+    }
+    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        <Self as ::serde::Deserialize>::deserialize(d)
+    }
+}
+#[doc(hidden)]
+pub const __STORED_VECTOR_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
+    type_url: "type.googleapis.com/scheda.v1.StoredVector",
+    to_json: ::buffa::type_registry::any_to_json::<StoredVector>,
+    from_json: ::buffa::type_registry::any_from_json::<StoredVector>,
+    is_wkt: false,
+};
 /// The request of `Vault.SearchDocuments`: a search of several
 /// collections.
 #[derive(Clone, PartialEq, Default)]
@@ -5226,7 +6353,8 @@ pub mod search_summary {
         /// `INDEX_SCOPE_ALL` or is encrypted, the Vault has no Projector, or the
         /// Projector marks no column `vector`.
         VECTOR_LEG_NO_VECTOR_COLLECTION = 2i32,
-        /// The Vault has no embedder.
+        /// The Vault has no embedder, and the subject is a `text` or a `like`.
+        /// A `vector` subject needs none.
         VECTOR_LEG_NO_EMBEDDER = 3i32,
         /// The Index holds no vector yet.
         VECTOR_LEG_NO_VECTORS = 4i32,
@@ -5432,7 +6560,8 @@ pub struct SearchHit {
     pub lexical_score: ::core::option::Option<f64>,
     /// The score of the vector leg, when that leg found it: `1 / (1 + d)`,
     /// with `d` the cosine distance of its text closest to the query (for
-    /// `like`, of its closest pair), so 1 for the same direction. A Document
+    /// `like`, of its closest pair), so 1 for the same direction; `d` is
+    /// computed from the full vectors, so `1 - d` is the cosine. A Document
     /// is ranked once, however many texts it has.
     ///
     /// Field 3: `vector_score`

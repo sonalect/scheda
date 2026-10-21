@@ -1008,7 +1008,13 @@ impl Context {
             });
         }
         let (generation, commit) = match (&live, rebuild) {
-            (Some((generation, Some(commit))), false) => (generation.clone(), commit.clone()),
+            (Some((generation, Some(commit))), false) => {
+                // Read after the round that wrote it ended: what it stopped
+                // naming stopped being named before now.
+                let mut commit = commit.clone();
+                commit.stamp(generation::now_millis());
+                (generation.clone(), commit)
+            }
             _ => {
                 let layout = layout.clone();
                 let generation = blocking(move |cx| layout.create(cx)).await?;
@@ -1097,10 +1103,9 @@ impl Context {
         let counts = work.counts;
         let mut commit = work.commit;
         if rebuild {
-            commit.retired = live.as_ref().map(|(generation, _)| generation::Retired {
-                name: generation.name().to_owned(),
-                at: generation::now_millis(),
-            });
+            commit.retired = live
+                .as_ref()
+                .map(|(generation, _)| generation::Retired::now(generation.name().to_owned()));
         }
         let root = self.index.root().to_path_buf();
         let state = commit.state().unwrap_or(to);

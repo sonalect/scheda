@@ -10,10 +10,10 @@
 //! A generation is built from nothing (the first build, `Index.Reindex`)
 //! beside the live one, which keeps answering, and becomes the live one
 //! when `current` is written to name it, under `index.lock`, in one atomic
-//! write. The generation it replaced is removed an hour later: no read of
-//! the Index lasts that long. A generation that no `current` names and that
-//! is not waiting to be removed is a build that died, and goes at the next
-//! round.
+//! write. The generation it replaced is removed an hour after it stopped
+//! being the live one (see **Removal**). A generation that no `current`
+//! names and that is not waiting to be removed is a build that died, and
+//! goes at the next round.
 //!
 //! `commit` holds the state of the Vault the generation reflects, the ports
 //! it was built with (the projection, the embedder's model and vector
@@ -21,6 +21,16 @@
 //! table and the Lance versions a reader opens. It is one file, written
 //! whole and last by a round, so a reader that reads it once sees one state
 //! of every collection.
+//!
+//! **Removal.** What a `commit` stops naming (a Lance version of a table, a
+//! dropped table or texts dataset, the generation a rebuild retired) stays
+//! on disk for [`VERSION_LIFETIME`] after it stopped: a reader that read the
+//! `commit` naming it may read it until then, however long the round that
+//! replaced it took. The moment it stopped is stamped by the next round,
+//! when it starts: a round starts under `index.lock`, after the round
+//! before it wrote its `commit`, so the stamp is never earlier than the
+//! moment no new reader could open what was replaced. A reader is thus
+//! safe for one hour from the moment before it read `commit`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -86,6 +96,49 @@ pub(crate) struct Table {
     pub(crate) declared: Declared,
     /// The versions a reader opens.
     pub(crate) versions: Versions,
+    /// The versions earlier `commit`s named that a reader may still read,
+    /// oldest first: what a round keeps when it prunes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) replaced: Vec<Replaced>,
+}
+
+impl Table {
+    /// The oldest version of each dataset of the table a reader may still
+    /// open at `now`: the one this `commit` names, or one an earlier
+    /// `commit` named that it stopped naming less than [`VERSION_LIFETIME`]
+    /// ago, or whose moment is not stamped yet. A round prunes the versions
+    /// before these.
+    pub(crate) fn keep_from(&self, now: u64) -> Versions {
+        let mut keep = self.versions.clone();
+        for replaced in self.replaced.iter().filter(|replaced| replaced.held(now)) {
+            keep.rows = keep.rows.min(replaced.versions.rows);
+            keep.files = keep.files.min(replaced.versions.files);
+            for (column, version) in &replaced.versions.texts {
+                if let Some(kept) = keep.texts.get_mut(column) {
+                    *kept = (*kept).min(*version);
+                }
+            }
+        }
+        keep
+    }
+}
+
+/// The versions an earlier `commit` named for a table, and when it stopped
+/// naming them.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct Replaced {
+    pub(crate) versions: Versions,
+    /// When they stopped being named, in milliseconds since the epoch, as
+    /// the round after the one that replaced them stamped it; `None` until
+    /// then.
+    pub(crate) since: Option<u64>,
+}
+
+impl Replaced {
+    /// Whether a reader may still read these versions at `now`.
+    fn held(&self, now: u64) -> bool {
+        self.since.is_none_or(|since| !expired(since, now))
+    }
 }
 
 /// A generation, or a table, that was replaced, and when.
@@ -94,9 +147,58 @@ pub(crate) struct Retired {
     /// The name of a generation; of a table (`t{n}`); or of the texts
     /// dataset of one column of a table, which the table no longer has.
     pub(crate) name: String,
-    /// When it was replaced, in milliseconds since the epoch.
+    /// When the live `commit` stopped naming it, in milliseconds since the
+    /// epoch, as the round after the one that replaced it stamped it; until
+    /// then the moment the round that replaced it did so, which an earlier
+    /// Scheda, reading this `commit`, takes for the stamp.
     pub(crate) at: u64,
+    /// Whether `at` is the stamp. Until it is, nothing is removed. An entry
+    /// of an earlier Scheda has no such field: its `at` is its stamp.
+    #[serde(default = "stamped_before")]
+    pub(crate) stamped: bool,
 }
+
+/// What `Retired.stamped` is in a `commit` of an earlier Scheda.
+fn stamped_before() -> bool {
+    true
+}
+
+impl Retired {
+    /// One replaced by the round that writes the next `commit`: its moment
+    /// is stamped by the round after.
+    pub(crate) fn now(name: String) -> Retired {
+        Retired {
+            name,
+            at: now_millis(),
+            stamped: false,
+        }
+    }
+
+    /// Whether its hour is over at `now`.
+    pub(crate) fn due(&self, now: u64) -> bool {
+        self.stamped && expired(self.at, now)
+    }
+
+    /// Stamps it at `now`, unless it is.
+    fn stamp(&mut self, now: u64) {
+        if !self.stamped {
+            self.at = now;
+            self.stamped = true;
+        }
+    }
+}
+
+/// Whether what stopped being named at `since` may be removed at `now`.
+fn expired(since: u64, now: u64) -> bool {
+    let lifetime = u64::try_from(VERSION_LIFETIME.as_millis()).unwrap_or(u64::MAX);
+    now.saturating_sub(since) >= lifetime
+}
+
+/// The stamps of [`Replaced`] in one bucket of this many milliseconds are
+/// one: the older versions are kept until the newer stamp, a minute at
+/// most longer, so a table keeps about sixty of them however often rounds
+/// run.
+const STAMP_BUCKET: u64 = 60_000;
 
 /// What a generation holds: its `commit`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -117,6 +219,11 @@ pub(crate) struct Commit {
     /// columns a table lost, until their folders are removed, an hour
     /// later: a reader of an older `commit` may still read them.
     pub(crate) dropped: Vec<Retired>,
+    /// Whether the tables record what they replaced
+    /// ([`Table::replaced`]). A `commit` of an earlier Scheda does not: the
+    /// next round keeps every version of it for one more hour.
+    #[serde(default)]
+    pub(crate) records_replaced: bool,
 }
 
 impl Commit {
@@ -130,6 +237,63 @@ impl Commit {
             rounds: 0,
             retired: None,
             dropped: Vec::new(),
+            records_replaced: true,
+        }
+    }
+
+    /// Stamps, at `now`, the moment of everything this `commit` stopped
+    /// naming that has no moment yet, and forgets what was replaced more
+    /// than [`VERSION_LIFETIME`] ago. Called by a round on the live
+    /// `commit` it read, before it writes anything: the round that wrote
+    /// this `commit` had ended by then.
+    pub(crate) fn stamp(&mut self, now: u64) {
+        if let Some(retired) = &mut self.retired {
+            retired.stamp(now);
+        }
+        for dropped in &mut self.dropped {
+            dropped.stamp(now);
+        }
+        let earlier = !self.records_replaced;
+        self.records_replaced = true;
+        for table in self.tables.values_mut() {
+            if earlier {
+                // Unknown: every version is kept for one more hour.
+                table.replaced = vec![Replaced {
+                    versions: Versions {
+                        rows: 0,
+                        files: 0,
+                        texts: table
+                            .versions
+                            .texts
+                            .keys()
+                            .map(|c| (c.clone(), 0))
+                            .collect(),
+                    },
+                    since: Some(now),
+                }];
+                continue;
+            }
+            let mut kept: Vec<Replaced> = Vec::with_capacity(table.replaced.len());
+            for mut replaced in table.replaced.drain(..) {
+                replaced.since.get_or_insert(now);
+                if !replaced.held(now) {
+                    continue;
+                }
+                match kept.last_mut() {
+                    // Of one bucket: the older versions, until the newer
+                    // stamp.
+                    Some(last)
+                        if last
+                            .since
+                            .zip(replaced.since)
+                            .is_some_and(|(a, b)| a / STAMP_BUCKET == b / STAMP_BUCKET) =>
+                    {
+                        last.since = replaced.since;
+                    }
+                    _ => kept.push(replaced),
+                }
+            }
+            table.replaced = kept;
         }
     }
 
@@ -255,9 +419,9 @@ impl Layout {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(err) => return Err(io(err)).context("list the generations of the Index"),
         };
-        let lifetime = u64::try_from(VERSION_LIFETIME.as_millis()).unwrap_or(u64::MAX);
+        let now = now_millis();
         let keep_retired = retired
-            .filter(|retired| now_millis().saturating_sub(retired.at) < lifetime)
+            .filter(|retired| !retired.due(now))
             .map(|retired| retired.name.as_str());
         for entry in entries {
             let entry = entry
@@ -330,13 +494,8 @@ impl Generation {
     /// covers `t3.lance`, `t3.files.lance`, and `t3.texts.{column}.lance`,
     /// never `t30.lance`). Under `index.lock`; `commit` is written after.
     pub(crate) fn sweep_tables(&self, _cx: &Blocking, commit: &mut Commit) {
-        let lifetime = u64::try_from(VERSION_LIFETIME.as_millis()).unwrap_or(u64::MAX);
         let now = now_millis();
-        let due = commit
-            .dropped
-            .iter()
-            .any(|table| now.saturating_sub(table.at) >= lifetime);
-        if !due {
+        if !commit.dropped.iter().any(|table| table.due(now)) {
             return;
         }
         // A folder that cannot be listed now is listed at the next round.
@@ -347,7 +506,7 @@ impl Generation {
             .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
             .collect();
         commit.dropped.retain(|table| {
-            if now.saturating_sub(table.at) < lifetime {
+            if !table.due(now) {
                 return true;
             }
             // A table that cannot be removed now (a reader holds a file of
@@ -388,7 +547,9 @@ impl Generation {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Commit, Layout, Ports, Retired, now_millis, valid_name};
+    use super::{
+        Commit, Layout, Ports, Replaced, Retired, Table, Versions, now_millis, valid_name,
+    };
 
     #[test]
     fn only_names_of_generations_are_generations() {
@@ -422,15 +583,20 @@ mod tests {
             Retired {
                 name: String::from("t3"),
                 at: 0,
+                stamped: true,
             },
             Retired {
                 name: String::from("t4.texts.tags"),
                 at: 0,
+                stamped: true,
             },
             Retired {
                 name: String::from("t30"),
                 at: now_millis(),
+                stamped: true,
             },
+            // Dropped by the round that wrote this commit: not stamped yet.
+            Retired::now(String::from("t31")),
         ];
         let commit = {
             let generation = generation.clone();
@@ -452,6 +618,175 @@ mod tests {
             .iter()
             .map(|table| table.name.as_str())
             .collect();
-        assert_eq!(kept, ["t30"], "the hour of t30 is not over");
+        assert_eq!(
+            kept,
+            ["t30", "t31"],
+            "the hour of t30 is not over, that of t31 has not begun"
+        );
+    }
+
+    fn versions(rows: u64, files: u64, texts: &[(&str, u64)]) -> Versions {
+        Versions {
+            rows,
+            files,
+            texts: texts
+                .iter()
+                .map(|(column, version)| ((*column).to_owned(), *version))
+                .collect(),
+        }
+    }
+
+    fn table(live: Versions, replaced: Vec<Replaced>) -> Table {
+        Table {
+            name: String::from("t0"),
+            shape: crate::store::Shape::default(),
+            declared: super::Declared::default(),
+            versions: live,
+            replaced,
+        }
+    }
+
+    const HOUR: u64 = 3_600_000;
+
+    #[test]
+    fn a_version_is_kept_for_an_hour_from_the_stamp_the_round_after_its_replacement_gives_it() {
+        let now = 10 * HOUR;
+        let mut commit = Commit::empty(Ports::default());
+        commit.tables.insert(
+            String::from("notes"),
+            table(
+                versions(9, 5, &[("tags", 7)]),
+                vec![
+                    // Replaced long ago: forgotten, and pruned.
+                    Replaced {
+                        versions: versions(2, 2, &[("tags", 2)]),
+                        since: Some(now - 2 * HOUR),
+                    },
+                    // Replaced less than an hour ago: kept.
+                    Replaced {
+                        versions: versions(5, 3, &[("tags", 4)]),
+                        since: Some(now - HOUR + 1),
+                    },
+                    // Replaced by the round that wrote this commit, however
+                    // long that round took: kept, from now on.
+                    Replaced {
+                        versions: versions(8, 4, &[("tags", 6)]),
+                        since: None,
+                    },
+                ],
+            ),
+        );
+        let held = &commit.tables["notes"];
+        assert_eq!(held.keep_from(now), versions(5, 3, &[("tags", 4)]));
+        commit.stamp(now);
+        let stamped = &commit.tables["notes"];
+        assert_eq!(
+            stamped
+                .replaced
+                .iter()
+                .map(|replaced| (replaced.versions.rows, replaced.since))
+                .collect::<Vec<_>>(),
+            [(5, Some(now - HOUR + 1)), (8, Some(now))]
+        );
+        // An hour after the oldest stamp, the pending one alone is kept.
+        assert_eq!(stamped.keep_from(now + 2), versions(8, 4, &[("tags", 6)]));
+        assert_eq!(
+            stamped.keep_from(now + HOUR),
+            versions(9, 5, &[("tags", 7)])
+        );
+    }
+
+    #[test]
+    fn stamps_within_a_minute_are_one_that_keeps_the_older_versions() {
+        let now = 10 * HOUR;
+        let mut commit = Commit::empty(Ports::default());
+        commit.tables.insert(
+            String::from("notes"),
+            table(
+                versions(9, 9, &[]),
+                vec![Replaced {
+                    versions: versions(3, 3, &[]),
+                    since: Some(now - now % super::STAMP_BUCKET),
+                }],
+            ),
+        );
+        commit
+            .tables
+            .get_mut("notes")
+            .unwrap()
+            .replaced
+            .push(Replaced {
+                versions: versions(6, 6, &[]),
+                since: None,
+            });
+        commit.stamp(now - now % super::STAMP_BUCKET + 10);
+        let replaced = &commit.tables["notes"].replaced;
+        assert_eq!(replaced.len(), 1);
+        assert_eq!(replaced[0].versions, versions(3, 3, &[]));
+        assert_eq!(
+            replaced[0].since,
+            Some(now - now % super::STAMP_BUCKET + 10)
+        );
+    }
+
+    #[test]
+    fn a_commit_of_an_earlier_scheda_keeps_every_version_for_an_hour_and_retired_ones_get_their_stamp()
+     {
+        let mut commit: Commit = serde_json::from_value(serde_json::json!({
+            "state": "",
+            "ports": {"projection": null, "embedder": null},
+            "tables": {"notes": {
+                "name": "t0",
+                "shape": {"columns": [], "vectors": [], "dimensions": null},
+                "declared": {"columns": [], "vectors": []},
+                "versions": {"rows": 12, "files": 8, "texts": {"tags": 4}}
+            }},
+            "next_table": 1,
+            "rounds": 3,
+            "retired": {"name": "g-1", "at": 5},
+            "dropped": [{"name": "t9", "at": 6}]
+        }))
+        .unwrap();
+        assert!(!commit.records_replaced);
+        assert!(
+            commit.dropped[0].stamped && commit.dropped[0].at == 6,
+            "an earlier stamp is read"
+        );
+        let now = 10 * HOUR;
+        commit.stamp(now);
+        assert!(commit.records_replaced);
+        assert_eq!(
+            commit.tables["notes"].keep_from(now + HOUR - 1),
+            versions(0, 0, &[("tags", 0)])
+        );
+        assert_eq!(
+            commit.tables["notes"].keep_from(now + HOUR),
+            versions(12, 8, &[("tags", 4)])
+        );
+
+        // An earlier Scheda reads what this one writes: its `Retired` had a
+        // number `at` and no `stamped`, its `Table` no `replaced`.
+        #[derive(serde::Deserialize)]
+        struct Earlier {
+            name: String,
+            at: u64,
+        }
+        let mut written = Commit::empty(Ports::default());
+        written.dropped.push(Retired::now(String::from("t9")));
+        let json = serde_json::to_value(&written).unwrap();
+        let read: Vec<Earlier> = serde_json::from_value(json["dropped"].clone()).unwrap();
+        assert_eq!(read[0].name, "t9");
+        assert!(
+            read[0].at > 0,
+            "the moment it was replaced, for an earlier Scheda"
+        );
+
+        let mut switched = Commit::empty(Ports::default());
+        switched.retired = Some(Retired::now(String::from("g-1")));
+        assert!(!switched.retired.as_ref().unwrap().due(u64::MAX));
+        switched.stamp(now);
+        assert_eq!(switched.retired.as_ref().unwrap().at, now);
+        assert!(!switched.retired.as_ref().unwrap().due(now + HOUR - 1));
+        assert!(switched.retired.as_ref().unwrap().due(now + HOUR));
     }
 }

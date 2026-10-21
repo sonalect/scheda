@@ -251,7 +251,8 @@ is refused.
 | `batch` | JSON Lines of `DocumentOperation` (`{"create":{"id":…,"raw":…,"note":…}}`) on stdin; all or none. Prints the `DocumentBatchResult` with `version`. |
 | `query` | `[--query JSON]` (`DocumentQuery`: `filter`, `orderBy` as `[{"column":…,"descending":…}]`, `offset`, `limit`, `startAfter`, `includeRaw`, `notBefore`). This collection only. First line `{"summary":{"total":"N"}}`, then one `{"document":…}` per line. |
 | `count` | `[--query JSON]`. Prints `{"count":"N"}`. |
-| `search` | `[--search JSON]` (`DocumentSearch`: `text` or `like`, `filter`, `k`, `lexicalWeight`, `vectorWeight`, `rerankLimit`, `includeRaw`, `offset`, `notBefore`). |
+| `search` | `[--search JSON]` (`DocumentSearch`: `text`, `like`, or `vector` (`{"column":…,"values":[…]}`), `filter`, `k`, `lexicalWeight`, `vectorWeight`, `exact`, `minVectorScore`, `rerankLimit`, `includeRaw`, `offset`, `notBefore`). |
+| `get-vectors` | `[--selection JSON]` (`VectorSelection`: `column`, `ids`, `notBefore`). The stored vectors of the column, one `{"vector":…}` or `{"absent":ID}` per line, in the order of the ids. |
 
 Bytes of any kind are a Document (STO-2); empty bytes are allowed. A
 `--file` that cannot be read is `INVALID_ARGUMENT`; the path is in the

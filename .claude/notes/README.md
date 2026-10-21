@@ -10,6 +10,7 @@ Project state, deferred work, and measurements that outlive one session
 | [p8-follow-ups.md](p8-follow-ups.md) | Small follow-ups found while building the CLI and the consumer test (P8): a vector-leg reason, CLI waits, the docs pass |
 | [index-risks.md](index-risks.md) | Audit of the indexer (19 October 2026): the six risks that the move to Lance left, the owner's decision on each (1–4 done, 5 and `like` deferred, 6 accepted), and what was found while building it |
 | [ci-platforms.md](ci-platforms.md) | CI on six platforms (branch `ci-six-platforms`): what runs where and why, what was fixed, timings with and without optimized deps |
+| [scheda-0.25.md](scheda-0.25.md) | The anchor consumer's asks S1–S4 for 0.25 (stored vectors, vector subject, exact search, bounded rounds) and the owner's decision on pruning old versions |
 
 ## Pointers
 

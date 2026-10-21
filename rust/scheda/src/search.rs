@@ -1,8 +1,8 @@
 //! Searches over the Index on Lance: `Collection.Search` and
 //! `Vault.SearchDocuments`.
 //!
-//! A search ranks: the Documents that best fit a text, or a Document, by
-//! relevance, with scores. Its scope and its `Filter` are those of a query;
+//! A search ranks: the Documents that best fit a text, a Document, or a
+//! vector, by relevance, with scores. Its scope and its `Filter` are those of a query;
 //! the filter narrows where the legs look before they rank (a prefilter),
 //! and never changes a score.
 //!
@@ -11,11 +11,22 @@
 //! words of the text; for `like` the words of the `fts` columns of that
 //! Document, as the Index holds them. The vector leg embeds the text
 //! (`Embedder.EmbedQuery`), or takes the stored vectors of the Document
-//! (`like`: every vector of each of its texts; no model is called), and
-//! asks each `vector` column for the nearest vectors by cosine distance:
-//! through its IVF_PQ index, the candidates ranked again with the full
-//! vectors, and by an exact scan of the rows no index covers yet (a table
-//! too small for an index, and the rows written since). A `text` column
+//! (`like`: every vector of each of its texts; no model is called), or
+//! takes the vector it is given (a `vector` subject: no model, no lexical
+//! leg, and only the column it names), and asks each `vector` column for
+//! the nearest vectors by cosine distance: through its IVF_PQ index, the
+//! candidates ranked again with the full vectors, and by an exact scan of
+//! the rows no index covers yet (a table too small for an index, and the
+//! rows written since). An `exact` search scans every vector the filter
+//! admits instead, and reads every row at the distance of its last hit, so
+//! the hits at one distance are taken in `id` order, not in the order Lance
+//! stored them: the hits depend only on the rows and the request. A
+//! `min_vector_score`, which needs `exact`, is a bound on the distance
+//! Lance applies to that scan (`distance_range`), the bound being the least
+//! distance whose score falls below it. Through an IVF_PQ index of cosine
+//! vectors Lance compares the bound with the index's own distances of the
+//! residuals (L2), and with the cosine distance only when it ranks the
+//! candidates again: no one bound means the same in both (Lance 13.0.0). A `text` column
 //! holds its vector in the rows. A `text list` column holds one vector per
 //! text in a texts dataset of its own, indexed the same way; its leg asks
 //! there for the nearest texts, and, while those belong to fewer Documents
@@ -51,7 +62,7 @@ use std::sync::Arc;
 use futures_util::{StreamExt, stream};
 use lance::Dataset;
 use lance::dataset::ROW_ID;
-use lance::dataset::scanner::{RowAddrMask, RowAddrTreeMap};
+use lance::dataset::scanner::{RowAddrMask, RowAddrTreeMap, Scanner};
 use lance::deps::arrow_array::{
     Array, FixedSizeListArray, Float32Array, ListArray, RecordBatch, StringArray, UInt64Array,
 };
@@ -60,7 +71,7 @@ use lance_index::scalar::FullTextSearchQuery;
 use lance_index::scalar::inverted::SCORE_COL;
 use lance_index::vector::DIST_COL;
 use lance_linalg::distance::DistanceType;
-use scheda_api::v1::document_search::Subject;
+use scheda_api::v1::document_search::{self, Subject};
 use scheda_api::v1::search_hit::VectorMatch;
 use scheda_api::v1::search_item::Item;
 use scheda_api::v1::search_summary::VectorLeg;
@@ -95,6 +106,18 @@ const RRF_K: f64 = 60.0;
 /// How many candidates of the PQ index per hit asked for are ranked again
 /// with the full vectors.
 const REFINE: u32 = 10;
+
+/// What an exact scan of the vectors may hold at once, as Lance bounds it:
+/// the bytes read ahead of the decoder (Lance's own default is 2 GiB), the
+/// rows of one decoded batch, and the batches decoded at once, one fragment
+/// at a time. Measured on vectors of 256 values: with Lance's defaults a
+/// scan of 200 000 rows held 124 MB, of 20 000 rows 47 MB; with these both
+/// hold 47 MB, about what reading and decoding one page of the file takes,
+/// and the scan is as fast. A read that needs more than the buffer at once
+/// (one page) still goes, alone.
+const SCAN_READ_AHEAD: u64 = 16 * 1024 * 1024;
+const SCAN_BATCH_ROWS: usize = 1_024;
+const SCAN_BATCHES: usize = 2;
 
 fn invalid(message: impl Into<String>) -> Error {
     Fault::new(VaultErrorCode::InvalidArgument, message).into()
@@ -150,6 +173,31 @@ struct Ask<'a> {
     vector_weight: f64,
     rerank_limit: Option<usize>,
     filter: Option<&'a Filter>,
+    look: Look,
+}
+
+/// How the vector leg looks for the nearest vectors.
+#[derive(Clone, Copy, Debug, Default)]
+struct Look {
+    /// Every vector the filter admits, not the vector index.
+    exact: bool,
+    /// The distance of a hit stays below this (`min_vector_score`).
+    below: Option<f32>,
+}
+
+/// The least distance whose `vector_score` (`1 / (1 + d)`) is below
+/// `score`, as Lance compares distances (`f32`): a distance below it scores
+/// at least `score`, one at or above it less.
+fn distance_below(score: f64) -> f32 {
+    let scored = |distance: f32| 1.0 / (1.0 + f64::from(distance));
+    let mut at = (1.0 / score - 1.0) as f32;
+    while scored(at) < score {
+        at = at.next_down();
+    }
+    while scored(at.next_up()) >= score {
+        at = at.next_up();
+    }
+    at.next_up()
 }
 
 impl<'a> Ask<'a> {
@@ -192,6 +240,10 @@ impl<'a> Ask<'a> {
             vector_weight,
             rerank_limit,
             filter: search.filter.as_option(),
+            look: Look {
+                exact: search.exact.unwrap_or(false),
+                below: search.min_vector_score.map(distance_below),
+            },
         })
     }
 
@@ -284,6 +336,50 @@ struct Like {
     vectors: Vec<Vec<f32>>,
 }
 
+/// The vector a `vector` subject gives, and the column it is compared with.
+struct Given {
+    column: String,
+    values: Vec<f32>,
+}
+
+/// The vector of `vector`, checked against the collections of `scope`.
+///
+/// # Errors
+///
+/// `INVALID_ARGUMENT` when no collection in scope keeps vectors in its
+/// column, or when a table that holds them holds vectors of another length.
+fn given_of(
+    reading: &Reading,
+    scope: &[Declaration],
+    vector: &document_search::Vector,
+) -> Result<Given, Error> {
+    let column = vector.column.clone().unwrap_or_default();
+    if !scope
+        .iter()
+        .any(|decl| reading.declares_vector(decl.name(), &column))
+    {
+        return Err(invalid(format!(
+            "no collection in scope keeps vectors in a column {column}"
+        )));
+    }
+    for decl in scope {
+        if let Some(dimensions) = reading.dimensions(decl.name())
+            && reading.vectors(decl.name()).contains(&column)
+            && usize::try_from(dimensions).ok() != Some(vector.values.len())
+        {
+            return Err(invalid(format!(
+                "the vector has {} values, and the vectors of {column} in {} have {dimensions}",
+                vector.values.len(),
+                decl.name()
+            )));
+        }
+    }
+    Ok(Given {
+        column,
+        values: vector.values.clone(),
+    })
+}
+
 async fn run(
     pass: &Pass,
     reading: &Reading,
@@ -301,10 +397,11 @@ async fn run(
             .collect();
         filter::check(filter, &columns, queries::max_depth(pass.vault()))?;
     }
-    let like = match &search.subject {
-        Some(Subject::Text(_)) => None,
-        Some(Subject::Like(key)) => Some(like_of(reading, key).await?),
-        None => return Err(invalid("a search names a text or a Document")),
+    let (like, given) = match &search.subject {
+        Some(Subject::Text(_)) => (None, None),
+        Some(Subject::Like(key)) => (Some(like_of(reading, key).await?), None),
+        Some(Subject::Vector(vector)) => (None, Some(given_of(reading, &scope, vector)?)),
+        None => return Err(invalid("a search names a text, a Document, or a vector")),
     };
     let text = match (&search.subject, &like) {
         (_, Some(like)) => like.text.clone(),
@@ -321,18 +418,28 @@ async fn run(
             tables.push((decl, table, dataset));
         }
     }
-    let leg = vector_leg(&ask, reading, &scope, embedder.is_some(), &tables).await?;
+    let only = given.as_ref().map(|given| given.column.as_str());
+    let leg = vector_leg(
+        &ask,
+        reading,
+        &scope,
+        given.is_some() || embedder.is_some(),
+        only,
+        &tables,
+    )
+    .await?;
     let mut queries_of_vector_leg = Vec::new();
     if leg == VectorLeg::VECTOR_LEG_RAN {
-        queries_of_vector_leg = match (&like, &embedder) {
-            (Some(like), _) => like.vectors.clone(),
-            (None, Some(embedder)) => vec![
+        queries_of_vector_leg = match (&like, &given, &embedder) {
+            (Some(like), _, _) => like.vectors.clone(),
+            (None, Some(given), _) => vec![given.values.clone()],
+            (None, None, Some(embedder)) => vec![
                 embedder
                     .embed_query(text.clone())
                     .await
                     .context("embed the text of the search")?,
             ],
-            (None, None) => Vec::new(),
+            (None, None, None) => Vec::new(),
         };
     }
     let mut legs = Vec::with_capacity(tables.len());
@@ -343,6 +450,7 @@ async fn run(
             depth,
             &text,
             &queries_of_vector_leg,
+            only,
             entry,
         ));
     }
@@ -451,24 +559,27 @@ fn closer(a: &(f64, Option<Matched>), b: &(f64, Option<Matched>)) -> bool {
 type Legs = (Vec<Candidate>, Vec<Candidate>);
 
 /// What the Index holds of one collection for a search: the lexical
-/// candidates, and the vector candidates of each of its `vector` columns.
+/// candidates, and the vector candidates of each of its `vector` columns
+/// (of `only`, when set).
 async fn table_legs(
     reading: &Reading,
     ask: &Ask<'_>,
     depth: usize,
     text: &str,
     vector_queries: &[Vec<f32>],
+    only: Option<&str>,
     entry: &(&Declaration, queries::Table, Dataset),
 ) -> Result<Legs, Error> {
     let (decl, table, dataset) = entry;
     // Lance allocates for the limit it is given, so a `k`, `offset`, or
     // `rerank_limit` of billions would abort the process. The table cannot
     // answer with more rows than it holds.
-    let reach = reach_in(depth, dataset.count_rows(None).await.map_err(lance_fault)?);
-    let prefilter = ask.filter.map_or_else(
-        || lit(true),
-        |filter| filter::compile(filter, table.columns()),
-    );
+    let rows = dataset.count_rows(None).await.map_err(lance_fault)?;
+    let reach = reach_in(depth, rows);
+    let filter = ask
+        .filter
+        .map(|filter| filter::compile(filter, table.columns()));
+    let prefilter = filter.clone().unwrap_or_else(|| lit(true));
     let fts = reading.fts_columns(decl.name());
     let mut lexical = Vec::new();
     if ask.lexical_weight > 0.0 && !fts.is_empty() && !text.trim().is_empty() {
@@ -488,6 +599,9 @@ async fn table_legs(
         // datasets of the collection.
         let mut admitted: Option<Arc<HashSet<String>>> = None;
         for (order, column) in reading.vectors(decl.name()).into_iter().enumerate() {
+            if only.is_some_and(|only| only != column) {
+                continue;
+            }
             if !table.is_list(&column) {
                 vector.extend(
                     vector_leg_on(
@@ -499,8 +613,10 @@ async fn table_legs(
                             column,
                         },
                         vector_queries.to_vec(),
-                        prefilter.clone(),
+                        filter.clone(),
                         reach,
+                        rows,
+                        ask.look,
                     )
                     .await?,
                 );
@@ -525,6 +641,7 @@ async fn table_legs(
                     vector_queries.to_vec(),
                     admitted.clone(),
                     reach,
+                    ask.look,
                 )
                 .await?,
             );
@@ -584,12 +701,15 @@ fn ranked<'a>(
 
 /// Why the vector leg runs or does not, the first that applies: not asked
 /// for; no collection in scope has a `vector` column the Projector marks;
-/// the Vault has no embedder; no table in scope holds a vector; it runs.
+/// the Vault has no embedder and the subject needs one (`embeds` unset);
+/// no table in scope holds a vector (in the column `only`, when set); it
+/// runs.
 async fn vector_leg(
     ask: &Ask<'_>,
     reading: &Reading,
     scope: &[Declaration],
-    has_embedder: bool,
+    embeds: bool,
+    only: Option<&str>,
     tables: &[(&Declaration, Table, Dataset)],
 ) -> Result<VectorLeg, Error> {
     if ask.vector_weight == 0.0 {
@@ -601,11 +721,14 @@ async fn vector_leg(
     {
         return Ok(VectorLeg::VECTOR_LEG_NO_VECTOR_COLLECTION);
     }
-    if !has_embedder {
+    if !embeds {
         return Ok(VectorLeg::VECTOR_LEG_NO_EMBEDDER);
     }
     for (decl, table, dataset) in tables {
         for column in &reading.vectors(decl.name()) {
+            if only.is_some_and(|only| only != column) {
+                continue;
+            }
             let held = if table.is_list(column) {
                 holds_text(table.clone(), column.clone()).await?
             } else {
@@ -791,44 +914,139 @@ async fn lexical_leg(
 
 /// The vector leg on one `text` vector column of one table, `matched`
 /// (its vector is in the rows): for each of the `queries`, up to `limit`
-/// rows that `prefilter` admits, nearest it by cosine distance. A row
+/// rows that `filter` admits (all when unset), nearest it by cosine
+/// distance, as `look` says, of the `total` rows of the table. A row
 /// without a vector there is never one.
+///
+/// No filter is given Lance when the search has none: with one, even
+/// `true`, Lance first marks the rows it admits, about 20 to 40 bytes a
+/// row of the table (measured on 200 000 rows), before it reads a vector.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the leg owns what it moves into its task"
+)]
 async fn vector_leg_on(
     dataset: Dataset,
     collection: String,
     matched: Matched,
     queries: Vec<Vec<f32>>,
-    prefilter: Expr,
+    filter: Option<Expr>,
     limit: usize,
+    total: usize,
+    look: Look,
 ) -> Result<Vec<Candidate>, Error> {
     task(async move {
         let column = vector_name(&matched.column);
+        let narrow = move |scanner: &mut Scanner| {
+            if let Some(filter) = &filter {
+                scanner.filter_expr(filter.clone());
+            }
+        };
         let mut found = Vec::new();
         for query in queries {
             let query = Float32Array::from(query);
-            let mut scanner = dataset.scan();
-            scanner
-                .nearest(&column, &query, limit)
-                .map_err(lance_fault)?
-                .distance_metric(DistanceType::Cosine)
-                .refine(REFINE)
-                .project(&["id"])
-                .map_err(lance_fault)?
-                .prefilter(true)
-                .filter_expr(prefilter.clone());
-            let batch = scanner.try_into_batch().await.map_err(lance_fault)?;
-            found.extend(
-                candidates(&batch, &collection, DIST_COL)?
-                    .into_iter()
-                    .map(|candidate| Candidate {
+            let batches = nearest_rows(
+                &dataset,
+                &column,
+                &query,
+                (limit, total),
+                look,
+                &["id"],
+                &narrow,
+            )
+            .await?;
+            for batch in &batches {
+                found.extend(candidates(batch, &collection, DIST_COL)?.into_iter().map(
+                    |candidate| Candidate {
                         matched: Some(matched.clone()),
                         ..candidate
-                    }),
-            );
+                    },
+                ));
+            }
         }
         Ok(found)
     })
     .await
+}
+
+/// The rows of `dataset` nearest `query` in the vector column `column` by
+/// cosine distance, at most `limit` of them (`total` is how many the
+/// dataset holds), each with `_distance` and the columns `project`, among
+/// those `narrow` admits and `look` keeps.
+///
+/// Without `look.exact` it asks the vector index, the candidates ranked
+/// again with the full vectors. With it Lance compares every vector, and
+/// orders the hits at one distance by where it stored them; so when the
+/// last of `limit` hits is at a distance other rows share, every row at
+/// that distance is read too, in a second batch: a caller that orders by
+/// distance and then by id takes the same first `limit` whatever the
+/// storage. The rows at one distance are few unless many texts are alike.
+async fn nearest_rows(
+    dataset: &Dataset,
+    column: &str,
+    query: &Float32Array,
+    (limit, total): (usize, usize),
+    look: Look,
+    project: &[&str],
+    narrow: &(dyn Fn(&mut Scanner) + Send + Sync),
+) -> Result<Vec<RecordBatch>, Error> {
+    let ask = |k: usize, lower: Option<f32>, upper: Option<f32>| -> Result<Scanner, Error> {
+        let mut scanner = dataset.scan();
+        scanner
+            .nearest(column, query, k)
+            .map_err(lance_fault)?
+            .distance_metric(DistanceType::Cosine)
+            .project(project)
+            .map_err(lance_fault)?
+            .prefilter(true);
+        if look.exact {
+            // The distances are computed in one stream after the read; a
+            // read split into a partition per core for a filter only queues
+            // batches for it, as many as the partitions hold.
+            scanner
+                .use_index(false)
+                .target_parallelism(1)
+                .fragment_readahead(1)
+                .io_buffer_size(SCAN_READ_AHEAD)
+                .batch_size(SCAN_BATCH_ROWS)
+                .batch_readahead(SCAN_BATCHES);
+        } else {
+            scanner.refine(REFINE);
+        }
+        scanner.distance_range(lower, upper);
+        narrow(&mut scanner);
+        Ok(scanner)
+    };
+    let first = ask(limit, None, look.below)?
+        .try_into_batch()
+        .await
+        .map_err(lance_fault)?;
+    if !look.exact || first.num_rows() < limit {
+        return Ok(vec![first]);
+    }
+    let distances = distances_in(&first)?;
+    let Some(last) = (0..first.num_rows())
+        .filter(|n| !distances.is_null(*n))
+        .map(|n| distances.value(n))
+        .max_by(f32::total_cmp)
+    else {
+        return Ok(vec![first]);
+    };
+    // Below the bound already: `last` is below it, so its successor is at
+    // most the bound.
+    let tied = ask(total.max(1), Some(last), Some(last.next_up()))?
+        .try_into_batch()
+        .await
+        .map_err(lance_fault)?;
+    Ok(vec![first, tied])
+}
+
+/// The `_distance` column of a batch of a vector search.
+fn distances_in(batch: &RecordBatch) -> Result<&Float32Array, Error> {
+    batch
+        .column_by_name(DIST_COL)
+        .and_then(|array| array.as_any().downcast_ref::<Float32Array>())
+        .ok_or_else(|| gave_no("score"))
 }
 
 /// The ids of the rows of `dataset` that `prefilter` admits.
@@ -851,7 +1069,12 @@ async fn ids_admitted(dataset: Dataset, prefilter: Expr) -> Result<HashSet<Strin
 /// The vector leg on the texts dataset `texts` of the `text list` vector
 /// column `column`, the `order`-th `vector` column of its collection: for
 /// each of the `queries`, up to `limit` Documents nearest it by their
-/// closest text, among the Documents `admitted` names (all when unset).
+/// closest text, as `look` says, among the Documents `admitted` names (all
+/// when unset).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the leg owns what it moves into its task"
+)]
 async fn texts_leg(
     texts: Dataset,
     collection: String,
@@ -860,6 +1083,7 @@ async fn texts_leg(
     queries: Vec<Vec<f32>>,
     admitted: Option<Arc<HashSet<String>>>,
     limit: usize,
+    look: Look,
 ) -> Result<Vec<Candidate>, Error> {
     task(async move {
         let total = texts.count_rows(None).await.map_err(lance_fault)?;
@@ -878,7 +1102,8 @@ async fn texts_leg(
         };
         let mut found = Vec::new();
         for query in queries {
-            let nearest = nearest_documents(&texts, &query, mask.as_ref(), limit, total).await?;
+            let nearest =
+                nearest_documents(&texts, &query, mask.as_ref(), (limit, total), look).await?;
             found.extend(
                 nearest
                     .into_iter()
@@ -918,8 +1143,8 @@ async fn rows_of(texts: &Dataset, admitted: &HashSet<String>) -> Result<Vec<u64>
 
 /// The Documents of the texts dataset `texts`, of `total` texts, nearest
 /// `query` by their closest text, among the texts `mask` admits (all when
-/// unset): at least `limit` of them when that many have a text there, each
-/// with the distance and the place of its closest text.
+/// unset), as `look` says: at least `limit` of them when that many have a
+/// text there, each with the distance and the place of its closest text.
 ///
 /// A Document has several texts, so the `limit` nearest texts may belong
 /// to fewer Documents. The texts asked for start at `limit`; while they
@@ -928,54 +1153,57 @@ async fn rows_of(texts: &Dataset, admitted: &HashSet<String>) -> Result<Vec<u64>
 /// `limit`, and at least twice as many, up to `total`. A Document whose
 /// closest text is among the texts found has its closest distance there,
 /// and one without a text among them is no closer than the last text
-/// found.
+/// found; an `exact` search also reads every text at that last distance
+/// ([`nearest_rows`]), so each Document at it is found too.
 async fn nearest_documents(
     texts: &Dataset,
     query: &[f32],
     mask: Option<&RowAddrMask>,
-    limit: usize,
-    total: usize,
+    (limit, total): (usize, usize),
+    look: Look,
 ) -> Result<HashMap<String, (f64, u32)>, Error> {
     let query = Float32Array::from(query.to_vec());
-    let mut asked = limit.min(total).max(1);
-    loop {
-        let mut scanner = texts.scan();
-        scanner
-            .nearest(VECTOR, &query, asked)
-            .map_err(lance_fault)?
-            .distance_metric(DistanceType::Cosine)
-            .refine(REFINE)
-            .project(&["id", POSITION])
-            .map_err(lance_fault)?
-            .prefilter(true);
+    let narrow = |scanner: &mut Scanner| {
         if let Some(mask) = mask {
             scanner.with_row_addr_prefilter(mask.clone());
         }
-        let batch = scanner.try_into_batch().await.map_err(lance_fault)?;
-        let ids = string_column(&batch, "id")?;
-        let positions = positions_in(&batch)?;
-        let distances = batch
-            .column_by_name(DIST_COL)
-            .and_then(|array| array.as_any().downcast_ref::<Float32Array>())
-            .ok_or_else(|| gave_no("score"))?;
+    };
+    let mut asked = limit.min(total).max(1);
+    loop {
+        let batches = nearest_rows(
+            texts,
+            VECTOR,
+            &query,
+            (asked, total),
+            look,
+            &["id", POSITION],
+            &narrow,
+        )
+        .await?;
         let mut nearest: HashMap<String, (f64, u32)> = HashMap::new();
-        for n in (0..batch.num_rows()).filter(|n| !distances.is_null(*n)) {
-            let found = (f64::from(distances.value(n)), positions.value(n));
-            match nearest.entry(ids.value(n).to_owned()) {
-                Entry::Vacant(entry) => {
-                    entry.insert(found);
-                }
-                Entry::Occupied(mut entry) => {
-                    let (distance, position) = *entry.get();
-                    if found.0.total_cmp(&distance).then(found.1.cmp(&position))
-                        == std::cmp::Ordering::Less
-                    {
+        for batch in &batches {
+            let ids = string_column(batch, "id")?;
+            let positions = positions_in(batch)?;
+            let distances = distances_in(batch)?;
+            for n in (0..batch.num_rows()).filter(|n| !distances.is_null(*n)) {
+                let found = (f64::from(distances.value(n)), positions.value(n));
+                match nearest.entry(ids.value(n).to_owned()) {
+                    Entry::Vacant(entry) => {
                         entry.insert(found);
+                    }
+                    Entry::Occupied(mut entry) => {
+                        let (distance, position) = *entry.get();
+                        if found.0.total_cmp(&distance).then(found.1.cmp(&position))
+                            == std::cmp::Ordering::Less
+                        {
+                            entry.insert(found);
+                        }
                     }
                 }
             }
         }
-        if nearest.len() >= limit || batch.num_rows() < asked || asked >= total {
+        let read = batches.first().map_or(0, RecordBatch::num_rows);
+        if nearest.len() >= limit || read < asked || asked >= total {
             return Ok(nearest);
         }
         let needed = asked.saturating_mul(limit).div_ceil(nearest.len().max(1));
@@ -1178,6 +1406,7 @@ mod tests {
             vector_weight,
             rerank_limit: None,
             filter: None,
+            look: Look::default(),
         }
     }
 
@@ -1236,5 +1465,130 @@ mod tests {
                 .unwrap();
         assert_eq!(texts_at(&batch, "tags"), ["red", "blue"]);
         assert!(texts_at(&batch, "absent").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod memory {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::store::{Embedding, Kind, Row, Shape, Table as Stored};
+    use crate::testing::measured;
+
+    /// Long enough that the vectors of the small table (20 MB) are more
+    /// than a scan may hold at once.
+    const DIMENSIONS: usize = 256;
+
+    fn vector_of(seed: usize) -> Vec<f32> {
+        let mut state = (seed as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        (0..DIMENSIONS)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state % 1000) as f32 / 1000.0 - 0.5
+            })
+            .collect()
+    }
+
+    fn shape() -> Shape {
+        Shape {
+            columns: vec![Column {
+                name: String::from("topic"),
+                kind: Kind::Text,
+                scalar_index: false,
+                fts: false,
+                vector: true,
+            }],
+            vectors: vec![String::from("topic")],
+            dimensions: Some(DIMENSIONS as u32),
+        }
+    }
+
+    /// A table of `rows` rows with a vector each, its indices made.
+    async fn table_of(dir: &std::path::Path, rows: usize) -> Dataset {
+        let mut table = Stored::open(dir, "t0", shape(), None).await.unwrap();
+        for start in (0..rows).step_by(20_000) {
+            let chunk: Vec<Row> = (start..rows.min(start + 20_000))
+                .map(|n| {
+                    let id = format!("r{n:06}");
+                    Row {
+                        file: format!("notes/{id}"),
+                        order: id.clone(),
+                        id,
+                        values: BTreeMap::new(),
+                        embeddings: BTreeMap::from([(
+                            String::from("topic"),
+                            vec![Embedding {
+                                position: 0,
+                                vector: vector_of(n % (rows / 4)),
+                                digest: format!("d{n}"),
+                            }],
+                        )]),
+                    }
+                })
+                .collect();
+            table.upsert(&chunk).await.unwrap();
+        }
+        table.maintain(1, None).await.unwrap();
+        let versions = table.versions();
+        let path = dir.join("t0.lance");
+        Dataset::open(path.to_str().unwrap())
+            .await
+            .unwrap()
+            .checkout_version(versions.rows)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "measures the memory of the process: run alone, by the memory target"]
+    async fn an_exact_search_holds_as_much_of_a_large_table_as_of_a_small_one() {
+        // What two scans bounded by the same settings may differ by.
+        const MARGIN: usize = 2 * 1024 * 1024;
+        let _alone = crate::testing::alone().await;
+        let base = std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let mut peaks = Vec::new();
+        for rows in [20_000, 200_000] {
+            let dir = base.join(format!("scheda-exact-memory-{rows}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_when_the_test_ends(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let dataset = table_of(&dir, rows).await;
+            let query = Float32Array::from(vector_of(7));
+            // A search without a filter gives Lance none.
+            let narrow = |_: &mut Scanner| {};
+            let look = Look {
+                exact: true,
+                below: None,
+            };
+            let (found, memory) = measured(nearest_rows(
+                &dataset,
+                &vector_name("topic"),
+                &query,
+                (51, rows),
+                look,
+                &["id"],
+                &narrow,
+            ))
+            .await;
+            // Each vector is stored four times: the last of the 51 ties.
+            let found: usize = found.unwrap().iter().map(RecordBatch::num_rows).sum();
+            assert!(found > 51, "the rows at the last distance are read too");
+            eprintln!(
+                "an exact search of {rows} rows: peak {} KB, allocated {} KB",
+                memory.peak / 1024,
+                memory.allocated / 1024
+            );
+            peaks.push(memory.peak);
+        }
+        assert!(
+            peaks[1] < peaks[0] + MARGIN,
+            "200 000 rows held {} KB, 20 000 rows {} KB",
+            peaks[1] / 1024,
+            peaks[0] / 1024
+        );
     }
 }

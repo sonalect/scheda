@@ -161,6 +161,9 @@ async fn collection_call(
             emit(&collection.count(query).await?)?;
         }
         CollectionCall::Search(search) => emit_stream(collection.search(search).await?).await?,
+        CollectionCall::GetVectors(selection) => {
+            emit_stream(collection.get_vectors(selection).await?).await?;
+        }
     }
     Ok(())
 }

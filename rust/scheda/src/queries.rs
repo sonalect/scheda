@@ -201,6 +201,25 @@ impl Reading {
             .collect()
     }
 
+    /// Whether the Vault's declaration of `collection` keeps vectors in its
+    /// column `name`: the Projector marks it `vector`, and the collection is
+    /// `INDEX_SCOPE_ALL`.
+    pub(crate) fn declares_vector(&self, collection: &str, name: &str) -> bool {
+        self.plan
+            .shapes
+            .get(collection)
+            .is_some_and(|shape| shape.vectors.iter().any(|vector| vector == name))
+    }
+
+    /// The length of the vectors the Index's table of `collection` holds,
+    /// when it holds a `vector` column.
+    pub(crate) fn dimensions(&self, collection: &str) -> Option<u32> {
+        self.commit
+            .tables
+            .get(collection)
+            .and_then(|table| table.shape.dimensions)
+    }
+
     /// The `fts` columns of `collection` a search can use: those the
     /// Vault's declaration keeps (none when the collection is
     /// `INDEX_SCOPE_IDS`) that the Index's table holds.

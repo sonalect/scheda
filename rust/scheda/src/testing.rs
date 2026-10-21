@@ -2,9 +2,11 @@
 //! through the same path the objects take (the gate, the blocking steps, the
 //! write lock), so a test sees what a caller sees.
 
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use protocontract::BoxIter;
 use scheda_api::v1::{
@@ -20,6 +22,103 @@ use crate::gate::Pass;
 use crate::ports::Ports;
 use crate::service;
 use crate::vault::Vault;
+
+/// The allocator of the unit tests: the system's, counting the bytes it
+/// holds, the most it held, and every byte it handed out, so a test can
+/// measure the memory of a piece of work ([`measured`]).
+#[global_allocator]
+static COUNTING: Counting = Counting;
+
+/// Bytes held now.
+static LIVE: AtomicUsize = AtomicUsize::new(0);
+/// The most bytes held since [`measured`] last began.
+static PEAK: AtomicUsize = AtomicUsize::new(0);
+/// Every byte handed out, a growth of a block counted as its growth.
+static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+
+struct Counting;
+
+impl Counting {
+    fn grew(by: usize) {
+        let live = LIVE.fetch_add(by, Ordering::Relaxed) + by;
+        PEAK.fetch_max(live, Ordering::Relaxed);
+        ALLOCATED.fetch_add(by as u64, Ordering::Relaxed);
+    }
+}
+
+// SAFETY: every call goes to `System` with the caller's arguments; the
+// counters are plain atomics.
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller's contract is `System`'s.
+        let block = unsafe { System.alloc(layout) };
+        if !block.is_null() {
+            Counting::grew(layout.size());
+        }
+        block
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: as `alloc`.
+        let block = unsafe { System.alloc_zeroed(layout) };
+        if !block.is_null() {
+            Counting::grew(layout.size());
+        }
+        block
+    }
+
+    unsafe fn dealloc(&self, block: *mut u8, layout: Layout) {
+        // SAFETY: as `alloc`.
+        unsafe { System.dealloc(block, layout) };
+        LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+    }
+
+    unsafe fn realloc(&self, block: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        // SAFETY: as `alloc`.
+        let moved = unsafe { System.realloc(block, layout, size) };
+        if !moved.is_null() {
+            if size >= layout.size() {
+                Counting::grew(size - layout.size());
+            } else {
+                LIVE.fetch_sub(layout.size() - size, Ordering::Relaxed);
+            }
+        }
+        moved
+    }
+}
+
+/// What a piece of work cost in memory: the most bytes it held at once
+/// beyond what was held when it began, and the bytes it allocated.
+#[cfg(feature = "index")]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Memory {
+    pub(crate) peak: usize,
+    pub(crate) allocated: u64,
+}
+
+/// Runs `work` and measures its [`Memory`]. The counters are of the
+/// process: a test that measures runs alone (the ignored memory tests, by
+/// their own target, one at a time), with no other work on its runtime.
+#[cfg(feature = "index")]
+pub(crate) async fn measured<T>(work: impl Future<Output = T>) -> (T, Memory) {
+    let base = LIVE.load(Ordering::SeqCst);
+    PEAK.store(base, Ordering::SeqCst);
+    let before = ALLOCATED.load(Ordering::SeqCst);
+    let out = work.await;
+    let memory = Memory {
+        peak: PEAK.load(Ordering::SeqCst).saturating_sub(base),
+        allocated: ALLOCATED.load(Ordering::SeqCst) - before,
+    };
+    (out, memory)
+}
+
+/// Held by a memory test while it measures: the counters are of the
+/// process, so two of them never run at once.
+#[cfg(feature = "index")]
+pub(crate) async fn alone() -> tokio::sync::MutexGuard<'static, ()> {
+    static ALONE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    ALONE.lock().await
+}
 
 thread_local! {
     /// The scratch folders of the test this thread runs.

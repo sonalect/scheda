@@ -8,7 +8,7 @@ use scheda::v1::{
     CollectionDeclaration, CollectionDeletion, CollectionOperation, DocumentCreation,
     DocumentDeletion, DocumentId, DocumentOperation, DocumentQuery, DocumentSearch,
     DocumentSelection, DocumentUpdate, DocumentUpsert, Ids, Listing, MirrorSetting,
-    VaultDocumentOperation, VaultErrorCode, VaultQuery, VaultSearch,
+    VaultDocumentOperation, VaultErrorCode, VaultQuery, VaultSearch, VectorSelection,
 };
 use scheda::{Error, Fault};
 
@@ -64,6 +64,7 @@ pub(crate) enum CollectionCall {
     Query(DocumentQuery),
     Count(DocumentQuery),
     Search(DocumentSearch),
+    GetVectors(VectorSelection),
 }
 
 /// One rpc of `Mirror`.
@@ -304,6 +305,11 @@ fn collection_call(command: CollectionCommand) -> Result<CollectionCall, Error> 
             search.as_deref(),
             "--search",
             parse_command::<DocumentSearch>,
+        )?),
+        CollectionCommand::GetVectors { selection } => CollectionCall::GetVectors(json_arg(
+            selection.as_deref(),
+            "--selection",
+            parse_command::<VectorSelection>,
         )?),
     })
 }

@@ -360,11 +360,18 @@ pub(crate) enum CollectionCommand {
         #[arg(long, value_name = "JSON")]
         query: Option<String>,
     },
-    /// The Documents that best fit a text, or a Document.
+    /// The Documents that best fit a text, a Document, or a vector.
     Search {
         /// The `DocumentSearch`, as Protobuf JSON.
         #[arg(long, value_name = "JSON")]
         search: Option<String>,
+    },
+    /// The vectors the Index holds in one `vector` column for some
+    /// Documents.
+    GetVectors {
+        /// The `VectorSelection`, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
+        selection: Option<String>,
     },
 }
 

@@ -201,6 +201,7 @@ pub mod document_search {
     pub enum Subject {
         Text(::buffa::alloc::string::String),
         Like(::buffa::alloc::boxed::Box<super::super::super::DocumentKey>),
+        Vector(::buffa::alloc::boxed::Box<super::super::super::document_search::Vector>),
     }
     impl ::buffa::Oneof for Subject {}
     impl From<super::super::super::DocumentKey> for Subject {
@@ -210,6 +211,17 @@ pub mod document_search {
     }
     impl From<super::super::super::DocumentKey> for ::core::option::Option<Subject> {
         fn from(v: super::super::super::DocumentKey) -> Self {
+            Self::Some(Subject::from(v))
+        }
+    }
+    impl From<super::super::super::document_search::Vector> for Subject {
+        fn from(v: super::super::super::document_search::Vector) -> Self {
+            Self::Vector(::buffa::alloc::boxed::Box::new(v))
+        }
+    }
+    impl From<super::super::super::document_search::Vector>
+    for ::core::option::Option<Subject> {
+        fn from(v: super::super::super::document_search::Vector) -> Self {
             Self::Some(Subject::from(v))
         }
     }
@@ -226,6 +238,47 @@ pub mod document_search {
                 }
                 Self::Like(v) => {
                     map.serialize_entry("like", &**v)?;
+                }
+                Self::Vector(v) => {
+                    map.serialize_entry("vector", &**v)?;
+                }
+            }
+            map.end()
+        }
+    }
+}
+pub mod vector_item {
+    #[allow(unused_imports)]
+    use super::*;
+    #[derive(Clone, PartialEq, Debug)]
+    pub enum Item {
+        Vector(::buffa::alloc::boxed::Box<super::super::super::StoredVector>),
+        Absent(::buffa::alloc::string::String),
+    }
+    impl ::buffa::Oneof for Item {}
+    impl From<super::super::super::StoredVector> for Item {
+        fn from(v: super::super::super::StoredVector) -> Self {
+            Self::Vector(::buffa::alloc::boxed::Box::new(v))
+        }
+    }
+    impl From<super::super::super::StoredVector> for ::core::option::Option<Item> {
+        fn from(v: super::super::super::StoredVector) -> Self {
+            Self::Some(Item::from(v))
+        }
+    }
+    impl ::serde::Serialize for Item {
+        fn serialize<S: ::serde::Serializer>(
+            &self,
+            s: S,
+        ) -> ::core::result::Result<S::Ok, S::Error> {
+            use ::serde::ser::SerializeMap;
+            let mut map = s.serialize_map(Some(1))?;
+            match self {
+                Self::Vector(v) => {
+                    map.serialize_entry("vector", &**v)?;
+                }
+                Self::Absent(v) => {
+                    map.serialize_entry("absent", v)?;
                 }
             }
             map.end()

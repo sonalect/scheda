@@ -110,6 +110,21 @@ service Collection {
   // another Projector or embedder than this Vault's, `INDEX_STALE`. A build
   // without `index`, `UNIMPLEMENTED`.
   rpc Search(DocumentSearch) returns (stream SearchItem);
+
+  // The vectors the Index holds in one `vector` column for the given
+  // Documents, as they were stored, with the digest of the text each was
+  // made from: one item per vector, in the order of the ids, a `text list`
+  // in the order of its texts, and one `absent` item for an id that has
+  // none. No model is called. A lazy stream: the vectors are read in
+  // portions of a few Documents as the stream reaches them, so its memory
+  // does not grow with the ids. It reads one snapshot of the Index, taken
+  // when the call starts, for one hour: an item asked later is
+  // `FAILED_PRECONDITION` (ask again for the ids not given yet). With
+  // `not_before`, it first waits for the Index to reach that state. A
+  // column the Projector does not mark `vector` for the collection,
+  // `INVALID_ARGUMENT`; a collection whose `index_scope` keeps no vectors,
+  // or an encrypted one, `UNIMPLEMENTED`. The Index codes of `Query`.
+  rpc GetVectors(VectorSelection) returns (stream VectorItem);
 }
 
 // A reference to one collection of a Vault.

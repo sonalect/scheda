@@ -61,6 +61,8 @@ mod tables;
 #[cfg(test)]
 mod testing;
 mod vault;
+#[cfg(feature = "index")]
+mod vectors;
 mod writer;
 
 #[cfg(feature = "encrypt")]

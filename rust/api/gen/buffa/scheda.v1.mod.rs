@@ -96,6 +96,10 @@ pub mod __buffa {
         reg.register_json_any(super::__QUERY_ITEM_JSON_ANY);
         reg.register_json_any(super::__QUERY_SUMMARY_JSON_ANY);
         reg.register_json_any(super::__DOCUMENT_SEARCH_JSON_ANY);
+        reg.register_json_any(super::document_search::__VECTOR_JSON_ANY);
+        reg.register_json_any(super::__VECTOR_SELECTION_JSON_ANY);
+        reg.register_json_any(super::__VECTOR_ITEM_JSON_ANY);
+        reg.register_json_any(super::__STORED_VECTOR_JSON_ANY);
         reg.register_json_any(super::__VAULT_SEARCH_JSON_ANY);
         reg.register_json_any(super::__SEARCH_ITEM_JSON_ANY);
         reg.register_json_any(super::__SEARCH_SUMMARY_JSON_ANY);
@@ -260,6 +264,18 @@ pub use self::__buffa::view::QuerySummaryOwnedView;
 pub use self::__buffa::view::DocumentSearchView;
 #[doc(inline)]
 pub use self::__buffa::view::DocumentSearchOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::VectorSelectionView;
+#[doc(inline)]
+pub use self::__buffa::view::VectorSelectionOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::VectorItemView;
+#[doc(inline)]
+pub use self::__buffa::view::VectorItemOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::StoredVectorView;
+#[doc(inline)]
+pub use self::__buffa::view::StoredVectorOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::VaultSearchView;
 #[doc(inline)]

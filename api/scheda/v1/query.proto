@@ -288,6 +288,64 @@ message QuerySummary {
 // The request of `Collection.Search`; inside `VaultSearch`, of
 // `Vault.SearchDocuments`.
 message DocumentSearch {
+  option (buf.validate.message) = {
+    cel: [
+      {
+        id: "document_search.vector.rerank"
+        message: "a search by a vector has no text to rerank by: rerank_limit must be unset"
+        expression: "!has(this.vector) || !has(this.rerank_limit)"
+      },
+      {
+        id: "document_search.vector.vector_weight"
+        message: "a search by a vector ranks by the vector leg alone: vector_weight must not be 0"
+        expression: "!has(this.vector) || !has(this.vector_weight) || this.vector_weight > 0.0"
+      },
+      {
+        id: "document_search.min_vector_score.vector_weight"
+        message: "min_vector_score bounds the vector leg, which a vector_weight of 0 turns off"
+        expression: "!has(this.min_vector_score) || !has(this.vector_weight) || this.vector_weight > 0.0"
+      },
+      {
+        id: "document_search.min_vector_score.exact"
+        message: "min_vector_score needs exact: only a full scan finds every Document above a bound"
+        expression: "!has(this.min_vector_score) || this.exact"
+      }
+    ]
+  };
+
+  // A vector the caller made, and the `vector` column it is compared with.
+  message Vector {
+    // A `vector` column the Projector declares for a collection in scope.
+    string column = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // The vector: as many values as the column's vectors have, each
+    // finite, not all 0. It must come from the embedding space of the
+    // column (the Vault's embedder, or the same model): only its length
+    // can be checked.
+    repeated float values = 2 [(buf.validate.field) = {
+      repeated: {
+        min_items: 1
+        items: {
+          float: {finite: true}
+        }
+      }
+      cel: [
+        {
+          id: "document_search.vector.values.finite"
+          message: "every value must be finite"
+          expression: "this.all(v, !v.isNan() && !v.isInf())"
+        },
+        {
+          id: "document_search.vector.values.direction"
+          message: "a vector of zeros has no direction"
+          expression: "this.exists(v, v != 0.0)"
+        }
+      ]
+    }];
+  }
+
   // What to rank by. Exactly one.
   oneof subject {
     option (buf.validate.oneof).required = true;
@@ -302,14 +360,20 @@ message DocumentSearch {
     // vector distance is then that of its closest pair: the smallest
     // distance between one text of `like` and one of its own.
     DocumentKey like = 2;
+    // A vector: the vector leg compares it with the vectors of its column
+    // alone, and calls no model; no lexical leg runs, and no embedder is
+    // needed. A column no collection in scope declares `vector`, or a
+    // length other than that of the column's vectors in the Index, is
+    // `INVALID_ARGUMENT`.
+    Vector vector = 3;
   }
   // Rank only the Documents this matches; both legs apply it before they
   // rank. Unset: all in scope.
-  Filter filter = 3;
+  Filter filter = 4;
   // How many hits. Unset or 0: 10. No upper limit beyond the Index.
-  uint32 k = 4;
+  uint32 k = 5;
   // Weight of the lexical leg. Unset: 1. Zero turns the leg off.
-  double lexical_weight = 5 [(buf.validate.field) = {
+  double lexical_weight = 6 [(buf.validate.field) = {
     double: {
       gte: 0
       finite: true
@@ -323,7 +387,7 @@ message DocumentSearch {
     ]
   }];
   // Weight of the vector leg. Unset: 1. Zero turns the leg off.
-  double vector_weight = 6 [(buf.validate.field) = {
+  double vector_weight = 7 [(buf.validate.field) = {
     double: {
       gte: 0
       finite: true
@@ -336,22 +400,107 @@ message DocumentSearch {
       }
     ]
   }];
+  // The vector leg compares the query with every vector the filter admits,
+  // whatever index the table has (a full scan, in memory bounded by the
+  // leg's depth, not by the table), so it finds the exact nearest, and
+  // Documents at the same distance in `id` order: its hits depend only on
+  // the Documents the Index holds and on the request. Unset: through the
+  // vector index of a large table, which is faster and approximate in which
+  // Documents it finds (another search, after writes moved the index, may
+  // find others). Either way `vector_score` comes from the full vectors.
+  bool exact = 8;
+  // The vector leg finds only Documents whose `vector_score` is at least
+  // this, nearest first, still cut by `offset` and `k`: a caller pages
+  // through "every Document at least this close" with `offset`. The
+  // lexical leg is not bounded; with `lexical_weight` 0, or a `vector`
+  // subject, every hit is. Needs `exact`: through the vector index Lance
+  // compares a bound with the index's own distances, not with the cosine
+  // distance, and could not promise every Document anyway. Above 0, at
+  // most 1. Unset: no bound.
+  double min_vector_score = 9 [(buf.validate.field) = {
+    double: {
+      gt: 0
+      lte: 1
+      finite: true
+    }
+    cel: [
+      {
+        id: "document_search.min_vector_score.finite"
+        message: "must be finite"
+        expression: "!this.isNan() && !this.isInf()"
+      }
+    ]
+  }];
   // Rerank the first this many fused hits with the Vault's reranker; set
   // without one, `INVALID_ARGUMENT`. Below the effective `k`,
-  // `INVALID_ARGUMENT`. Unset: no rerank.
-  uint32 rerank_limit = 7 [(buf.validate.field) = {
+  // `INVALID_ARGUMENT`. With a `vector` subject, `INVALID_ARGUMENT`: the
+  // reranker scores against a text. Unset: no rerank.
+  uint32 rerank_limit = 10 [(buf.validate.field) = {
     uint32: {gte: 1}
   }];
   // Fill the `raw` of each hit's Document.
-  bool include_raw = 8;
+  bool include_raw = 11;
   // Skip this many hits first; their files are not opened. A second
   // search ranks again, so its page need not follow the first one's:
-  // pages that must agree come from one search with a large enough `k`.
-  uint32 offset = 9;
+  // pages that must agree come from one search with a large enough `k`,
+  // or from searches that are `exact`.
+  uint32 offset = 12;
   // As `DocumentQuery.not_before`.
-  string not_before = 10 [(buf.validate.field) = {
+  string not_before = 13 [(buf.validate.field) = {
     string: {min_len: 1}
   }];
+}
+
+// The request of `Collection.GetVectors`.
+message VectorSelection {
+  // A `vector` column the Projector declares for the collection.
+  string column = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The Documents, in the order their vectors come; an id given twice
+  // comes twice. At least one.
+  repeated string ids = 2 [(buf.validate.field) = {
+    repeated: {
+      min_items: 1
+      items: {
+        string: {min_len: 1}
+      }
+    }
+  }];
+  // As `DocumentQuery.not_before`.
+  string not_before = 3 [(buf.validate.field) = {
+    string: {min_len: 1}
+  }];
+}
+
+// One item of `Collection.GetVectors`.
+message VectorItem {
+  oneof item {
+    // A vector the Index holds.
+    StoredVector vector = 1;
+    // An id the Index holds no vector of in the column: no such Document in
+    // the snapshot (not written, not indexed yet, or left out by the
+    // Projector), or none of its texts with a vector (blank, or refused by
+    // the embedder).
+    string absent = 2;
+  }
+}
+
+// One vector of a Document, as the Index stored it.
+message StoredVector {
+  // The Document.
+  string id = 1;
+  // The place of its text in the column's `text list`, from 0; 0 in a
+  // `text` column. A text without a vector has no item.
+  uint32 position = 2;
+  // The git blob id of the text the vector was made from (`git
+  // hash-object` of its UTF-8 bytes): the same as that of the text the
+  // caller holds now when the vector is of that text, not of one the Index
+  // has not caught up on.
+  string digest = 3;
+  // The vector, as the embedder gave it.
+  repeated float values = 4;
 }
 
 // The request of `Vault.SearchDocuments`: a search of several
@@ -385,7 +534,8 @@ message SearchSummary {
     // `INDEX_SCOPE_ALL` or is encrypted, the Vault has no Projector, or the
     // Projector marks no column `vector`.
     VECTOR_LEG_NO_VECTOR_COLLECTION = 2;
-    // The Vault has no embedder.
+    // The Vault has no embedder, and the subject is a `text` or a `like`.
+    // A `vector` subject needs none.
     VECTOR_LEG_NO_EMBEDDER = 3;
     // The Index holds no vector yet.
     VECTOR_LEG_NO_VECTORS = 4;
@@ -414,7 +564,8 @@ message SearchHit {
   double lexical_score = 2;
   // The score of the vector leg, when that leg found it: `1 / (1 + d)`,
   // with `d` the cosine distance of its text closest to the query (for
-  // `like`, of its closest pair), so 1 for the same direction. A Document
+  // `like`, of its closest pair), so 1 for the same direction; `d` is
+  // computed from the full vectors, so `1 - d` is the cosine. A Document
   // is ranked once, however many texts it has.
   double vector_score = 3;
   // The fused score (Reciprocal Rank Fusion of the legs that ran).

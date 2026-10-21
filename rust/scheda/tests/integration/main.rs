@@ -19,4 +19,5 @@ mod reads;
 mod runtime;
 mod search;
 mod texts;
+mod vectors;
 mod write;

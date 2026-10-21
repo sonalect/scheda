@@ -239,7 +239,16 @@ fn help_lists_the_subcommands_and_not_the_ones_that_are_gone() {
     let sub = run(&["collection", "x", "--help"]);
     assert_eq!(sub.status, 0, "stderr={}", sub.stderr);
     for name in [
-        "describe", "get-many", "history", "create", "upsert", "batch", "query", "count", "search",
+        "describe",
+        "get-many",
+        "history",
+        "create",
+        "upsert",
+        "batch",
+        "query",
+        "count",
+        "search",
+        "get-vectors",
     ] {
         assert!(sub.stdout.contains(name), "{name}: {}", sub.stdout);
     }

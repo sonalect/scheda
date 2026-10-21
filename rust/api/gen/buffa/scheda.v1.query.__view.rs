@@ -5868,39 +5868,63 @@ pub struct DocumentSearchView<'a> {
     /// Rank only the Documents this matches; both legs apply it before they
     /// rank. Unset: all in scope.
     ///
-    /// Field 3: `filter`
+    /// Field 4: `filter`
     pub filter: ::buffa::MessageFieldView<super::super::__buffa::view::FilterView<'a>>,
     /// How many hits. Unset or 0: 10. No upper limit beyond the Index.
     ///
-    /// Field 4: `k`
+    /// Field 5: `k`
     pub k: ::core::option::Option<u32>,
     /// Weight of the lexical leg. Unset: 1. Zero turns the leg off.
     ///
-    /// Field 5: `lexical_weight`
+    /// Field 6: `lexical_weight`
     pub lexical_weight: ::core::option::Option<f64>,
     /// Weight of the vector leg. Unset: 1. Zero turns the leg off.
     ///
-    /// Field 6: `vector_weight`
+    /// Field 7: `vector_weight`
     pub vector_weight: ::core::option::Option<f64>,
+    /// The vector leg compares the query with every vector the filter admits,
+    /// whatever index the table has (a full scan, in memory bounded by the
+    /// leg's depth, not by the table), so it finds the exact nearest, and
+    /// Documents at the same distance in `id` order: its hits depend only on
+    /// the Documents the Index holds and on the request. Unset: through the
+    /// vector index of a large table, which is faster and approximate in which
+    /// Documents it finds (another search, after writes moved the index, may
+    /// find others). Either way `vector_score` comes from the full vectors.
+    ///
+    /// Field 8: `exact`
+    pub exact: ::core::option::Option<bool>,
+    /// The vector leg finds only Documents whose `vector_score` is at least
+    /// this, nearest first, still cut by `offset` and `k`: a caller pages
+    /// through "every Document at least this close" with `offset`. The
+    /// lexical leg is not bounded; with `lexical_weight` 0, or a `vector`
+    /// subject, every hit is. Needs `exact`: through the vector index Lance
+    /// compares a bound with the index's own distances, not with the cosine
+    /// distance, and could not promise every Document anyway. Above 0, at
+    /// most 1. Unset: no bound.
+    ///
+    /// Field 9: `min_vector_score`
+    pub min_vector_score: ::core::option::Option<f64>,
     /// Rerank the first this many fused hits with the Vault's reranker; set
     /// without one, `INVALID_ARGUMENT`. Below the effective `k`,
-    /// `INVALID_ARGUMENT`. Unset: no rerank.
+    /// `INVALID_ARGUMENT`. With a `vector` subject, `INVALID_ARGUMENT`: the
+    /// reranker scores against a text. Unset: no rerank.
     ///
-    /// Field 7: `rerank_limit`
+    /// Field 10: `rerank_limit`
     pub rerank_limit: ::core::option::Option<u32>,
     /// Fill the `raw` of each hit's Document.
     ///
-    /// Field 8: `include_raw`
+    /// Field 11: `include_raw`
     pub include_raw: ::core::option::Option<bool>,
     /// Skip this many hits first; their files are not opened. A second
     /// search ranks again, so its page need not follow the first one's:
-    /// pages that must agree come from one search with a large enough `k`.
+    /// pages that must agree come from one search with a large enough `k`,
+    /// or from searches that are `exact`.
     ///
-    /// Field 9: `offset`
+    /// Field 12: `offset`
     pub offset: ::core::option::Option<u32>,
     /// As `DocumentQuery.not_before`.
     ///
-    /// Field 10: `not_before`
+    /// Field 13: `not_before`
     pub not_before: ::core::option::Option<&'a str>,
     pub subject: ::core::option::Option<
         super::super::__buffa::view::oneof::document_search::Subject<'a>,
@@ -5937,7 +5961,7 @@ impl<'a> ::buffa::MessageView<'a> for DocumentSearchView<'a> {
         let view = self;
         let mut cur = cur;
         match tag.field_number() {
-            3u32 => {
+            4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -5958,49 +5982,63 @@ impl<'a> ::buffa::MessageView<'a> for DocumentSearchView<'a> {
                     }
                 }
             }
-            4u32 => {
+            5u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.k = Some(::buffa::types::decode_uint32(&mut cur)?);
             }
-            5u32 => {
+            6u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Fixed64,
                 )?;
                 view.lexical_weight = Some(::buffa::types::decode_double(&mut cur)?);
             }
-            6u32 => {
+            7u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Fixed64,
                 )?;
                 view.vector_weight = Some(::buffa::types::decode_double(&mut cur)?);
             }
-            7u32 => {
+            8u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.exact = Some(::buffa::types::decode_bool(&mut cur)?);
+            }
+            9u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Fixed64,
+                )?;
+                view.min_vector_score = Some(::buffa::types::decode_double(&mut cur)?);
+            }
+            10u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.rerank_limit = Some(::buffa::types::decode_uint32(&mut cur)?);
             }
-            8u32 => {
+            11u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.include_raw = Some(::buffa::types::decode_bool(&mut cur)?);
             }
-            9u32 => {
+            12u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.offset = Some(::buffa::types::decode_uint32(&mut cur)?);
             }
-            10u32 => {
+            13u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -6049,6 +6087,37 @@ impl<'a> ::buffa::MessageView<'a> for DocumentSearchView<'a> {
                     );
                 }
             }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __sub_ctx = ctx.descend()?;
+                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                if let Some(
+                    super::super::__buffa::view::oneof::document_search::Subject::Vector(
+                        ref mut existing,
+                    ),
+                ) = view.subject
+                {
+                    ::buffa::MessageView::merge_into_view(
+                        &mut **existing,
+                        sub,
+                        __sub_ctx,
+                    )?;
+                } else {
+                    view.subject = Some(
+                        super::super::__buffa::view::oneof::document_search::Subject::Vector(
+                            ::buffa::alloc::boxed::Box::new(
+                                <super::super::__buffa::view::document_search::VectorView as ::buffa::MessageView>::decode_view_ctx(
+                                    sub,
+                                    __sub_ctx,
+                                )?,
+                            ),
+                        ),
+                    );
+                }
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -6083,6 +6152,8 @@ impl<'a> ::buffa::MessageView<'a> for DocumentSearchView<'a> {
             k: self.k,
             lexical_weight: self.lexical_weight,
             vector_weight: self.vector_weight,
+            exact: self.exact,
+            min_vector_score: self.min_vector_score,
             rerank_limit: self.rerank_limit,
             include_raw: self.include_raw,
             offset: self.offset,
@@ -6102,6 +6173,15 @@ impl<'a> ::buffa::MessageView<'a> for DocumentSearchView<'a> {
                                 v,
                             ) => {
                                 super::super::__buffa::oneof::document_search::Subject::Like(
+                                    ::buffa::alloc::boxed::Box::new(
+                                        v.to_owned_from_source(__buffa_src)?,
+                                    ),
+                                )
+                            }
+                            super::super::__buffa::view::oneof::document_search::Subject::Vector(
+                                v,
+                            ) => {
+                                super::super::__buffa::oneof::document_search::Subject::Vector(
                                     ::buffa::alloc::boxed::Box::new(
                                         v.to_owned_from_source(__buffa_src)?,
                                     ),
@@ -6140,6 +6220,16 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentSearchView<'a> {
                         += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
                             + inner as u64;
                 }
+                super::super::__buffa::view::oneof::document_search::Subject::Vector(
+                    x,
+                ) => {
+                    let __slot = __cache.reserve();
+                    let inner = x.compute_size(__cache);
+                    __cache.set(__slot, inner);
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
+                            + inner as u64;
+                }
             }
         }
         if self.filter.is_set() {
@@ -6157,6 +6247,12 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentSearchView<'a> {
             size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
         }
         if self.vector_weight.is_some() {
+            size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
+        }
+        if self.exact.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
+        if self.min_vector_score.is_some() {
             size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
         }
         if let Some(v) = self.rerank_limit {
@@ -6199,36 +6295,52 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentSearchView<'a> {
                     );
                     x.write_to(__cache, buf);
                 }
+                super::super::__buffa::view::oneof::document_search::Subject::Vector(
+                    x,
+                ) => {
+                    ::buffa::types::put_len_delimited_header(
+                        3u32,
+                        u64::from(__cache.consume_next()),
+                        buf,
+                    );
+                    x.write_to(__cache, buf);
+                }
             }
         }
         if self.filter.is_set() {
             ::buffa::types::put_len_delimited_header(
-                3u32,
+                4u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
             self.filter.write_to(__cache, buf);
         }
         if let Some(v) = self.k {
-            ::buffa::types::put_uint32_field(4u32, v, buf);
+            ::buffa::types::put_uint32_field(5u32, v, buf);
         }
         if let Some(v) = self.lexical_weight {
-            ::buffa::types::put_double_field(5u32, v, buf);
-        }
-        if let Some(v) = self.vector_weight {
             ::buffa::types::put_double_field(6u32, v, buf);
         }
-        if let Some(v) = self.rerank_limit {
-            ::buffa::types::put_uint32_field(7u32, v, buf);
+        if let Some(v) = self.vector_weight {
+            ::buffa::types::put_double_field(7u32, v, buf);
         }
-        if let Some(v) = self.include_raw {
+        if let Some(v) = self.exact {
             ::buffa::types::put_bool_field(8u32, v, buf);
         }
+        if let Some(v) = self.min_vector_score {
+            ::buffa::types::put_double_field(9u32, v, buf);
+        }
+        if let Some(v) = self.rerank_limit {
+            ::buffa::types::put_uint32_field(10u32, v, buf);
+        }
+        if let Some(v) = self.include_raw {
+            ::buffa::types::put_bool_field(11u32, v, buf);
+        }
         if let Some(v) = self.offset {
-            ::buffa::types::put_uint32_field(9u32, v, buf);
+            ::buffa::types::put_uint32_field(12u32, v, buf);
         }
         if let Some(ref v) = self.not_before {
-            ::buffa::types::put_string_field(10u32, v, buf);
+            ::buffa::types::put_string_field(13u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -6273,6 +6385,16 @@ impl<'__a> ::serde::Serialize for DocumentSearchView<'__a> {
                     &::buffa::json_helpers::ProtoJson(&__v),
                 )?;
         }
+        if let ::core::option::Option::Some(__v) = self.exact {
+            __map.serialize_entry("exact", &__v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.min_vector_score {
+            __map
+                .serialize_entry(
+                    "minVectorScore",
+                    &::buffa::json_helpers::ProtoJson(&__v),
+                )?;
+        }
         if let ::core::option::Option::Some(__v) = self.rerank_limit {
             __map
                 .serialize_entry(
@@ -6300,6 +6422,11 @@ impl<'__a> ::serde::Serialize for DocumentSearchView<'__a> {
                     v,
                 ) => {
                     __map.serialize_entry("like", v)?;
+                }
+                super::super::__buffa::view::oneof::document_search::Subject::Vector(
+                    v,
+                ) => {
+                    __map.serialize_entry("vector", v)?;
                 }
             }
         }
@@ -6399,7 +6526,7 @@ impl DocumentSearchOwnedView {
     /// Rank only the Documents this matches; both legs apply it before they
     /// rank. Unset: all in scope.
     ///
-    /// Field 3: `filter`
+    /// Field 4: `filter`
     #[must_use]
     pub fn filter(
         &self,
@@ -6408,53 +6535,83 @@ impl DocumentSearchOwnedView {
     }
     /// How many hits. Unset or 0: 10. No upper limit beyond the Index.
     ///
-    /// Field 4: `k`
+    /// Field 5: `k`
     #[must_use]
     pub fn k(&self) -> ::core::option::Option<u32> {
         self.0.reborrow().k
     }
     /// Weight of the lexical leg. Unset: 1. Zero turns the leg off.
     ///
-    /// Field 5: `lexical_weight`
+    /// Field 6: `lexical_weight`
     #[must_use]
     pub fn lexical_weight(&self) -> ::core::option::Option<f64> {
         self.0.reborrow().lexical_weight
     }
     /// Weight of the vector leg. Unset: 1. Zero turns the leg off.
     ///
-    /// Field 6: `vector_weight`
+    /// Field 7: `vector_weight`
     #[must_use]
     pub fn vector_weight(&self) -> ::core::option::Option<f64> {
         self.0.reborrow().vector_weight
     }
+    /// The vector leg compares the query with every vector the filter admits,
+    /// whatever index the table has (a full scan, in memory bounded by the
+    /// leg's depth, not by the table), so it finds the exact nearest, and
+    /// Documents at the same distance in `id` order: its hits depend only on
+    /// the Documents the Index holds and on the request. Unset: through the
+    /// vector index of a large table, which is faster and approximate in which
+    /// Documents it finds (another search, after writes moved the index, may
+    /// find others). Either way `vector_score` comes from the full vectors.
+    ///
+    /// Field 8: `exact`
+    #[must_use]
+    pub fn exact(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().exact
+    }
+    /// The vector leg finds only Documents whose `vector_score` is at least
+    /// this, nearest first, still cut by `offset` and `k`: a caller pages
+    /// through "every Document at least this close" with `offset`. The
+    /// lexical leg is not bounded; with `lexical_weight` 0, or a `vector`
+    /// subject, every hit is. Needs `exact`: through the vector index Lance
+    /// compares a bound with the index's own distances, not with the cosine
+    /// distance, and could not promise every Document anyway. Above 0, at
+    /// most 1. Unset: no bound.
+    ///
+    /// Field 9: `min_vector_score`
+    #[must_use]
+    pub fn min_vector_score(&self) -> ::core::option::Option<f64> {
+        self.0.reborrow().min_vector_score
+    }
     /// Rerank the first this many fused hits with the Vault's reranker; set
     /// without one, `INVALID_ARGUMENT`. Below the effective `k`,
-    /// `INVALID_ARGUMENT`. Unset: no rerank.
+    /// `INVALID_ARGUMENT`. With a `vector` subject, `INVALID_ARGUMENT`: the
+    /// reranker scores against a text. Unset: no rerank.
     ///
-    /// Field 7: `rerank_limit`
+    /// Field 10: `rerank_limit`
     #[must_use]
     pub fn rerank_limit(&self) -> ::core::option::Option<u32> {
         self.0.reborrow().rerank_limit
     }
     /// Fill the `raw` of each hit's Document.
     ///
-    /// Field 8: `include_raw`
+    /// Field 11: `include_raw`
     #[must_use]
     pub fn include_raw(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().include_raw
     }
     /// Skip this many hits first; their files are not opened. A second
     /// search ranks again, so its page need not follow the first one's:
-    /// pages that must agree come from one search with a large enough `k`.
+    /// pages that must agree come from one search with a large enough `k`,
+    /// or from searches that are `exact`.
     ///
-    /// Field 9: `offset`
+    /// Field 12: `offset`
     #[must_use]
     pub fn offset(&self) -> ::core::option::Option<u32> {
         self.0.reborrow().offset
     }
     /// As `DocumentQuery.not_before`.
     ///
-    /// Field 10: `not_before`
+    /// Field 13: `not_before`
     #[must_use]
     pub fn not_before(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().not_before
@@ -6492,6 +6649,1343 @@ impl ::buffa::HasMessageView for super::super::DocumentSearch {
     type ViewHandle = DocumentSearchOwnedView;
 }
 impl ::serde::Serialize for DocumentSearchOwnedView {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        ::serde::Serialize::serialize(&self.0, __s)
+    }
+}
+pub mod document_search {
+    #[allow(unused_imports)]
+    use super::*;
+    /// A vector the caller made, and the `vector` column it is compared with.
+    #[derive(Clone, Debug, Default)]
+    pub struct VectorView<'a> {
+        /// A `vector` column the Projector declares for a collection in scope.
+        ///
+        /// Field 1: `column`
+        pub column: ::core::option::Option<&'a str>,
+        /// The vector: as many values as the column's vectors have, each
+        /// finite, not all 0. It must come from the embedding space of the
+        /// column (the Vault's embedder, or the same model): only its length
+        /// can be checked.
+        ///
+        /// Field 2: `values`
+        pub values: ::buffa::RepeatedView<'a, f32>,
+        pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
+    }
+    impl<'a> ::buffa::MessageView<'a> for VectorView<'a> {
+        type Owned = super::super::super::document_search::Vector;
+        fn decode_view(
+            buf: &'a [u8],
+        ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+            let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+            let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+            <Self as ::buffa::MessageView>::decode_view_ctx(
+                buf,
+                ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                    .with_element_memory(&__elem),
+            )
+        }
+        fn decode_view_with_ctx(
+            buf: &'a [u8],
+            ctx: ::buffa::DecodeContext<'_>,
+        ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+            <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+        }
+        #[inline]
+        fn merge_view_field(
+            &mut self,
+            tag: ::buffa::encoding::Tag,
+            cur: &'a [u8],
+            before_tag: &'a [u8],
+            ctx: ::buffa::DecodeContext<'_>,
+        ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+            let _ = ctx;
+            #[allow(unused_variables)]
+            let view = self;
+            let mut cur = cur;
+            match tag.field_number() {
+                1u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.column = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
+                2u32 => {
+                    if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                        let payload = ::buffa::types::borrow_bytes(&mut cur)?;
+                        ::buffa::types::extend_packed_float(
+                            payload,
+                            view.values.as_mut_vec(),
+                        )?;
+                    } else if tag.wire_type() == ::buffa::encoding::WireType::Fixed32 {
+                        view.values.push(::buffa::types::decode_float(&mut cur)?);
+                    } else {
+                        return Err(
+                            ::buffa::encoding::wire_type_mismatch(
+                                tag,
+                                ::buffa::encoding::WireType::LengthDelimited,
+                            ),
+                        );
+                    }
+                }
+                _ => {
+                    ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                    let span_len = before_tag.len() - cur.len();
+                    view.__buffa_unknown_fields.push_record(before_tag, span_len, ctx)?;
+                }
+            }
+            ::core::result::Result::Ok(cur)
+        }
+        fn to_owned_message(
+            &self,
+        ) -> ::core::result::Result<
+            super::super::super::document_search::Vector,
+            ::buffa::DecodeError,
+        > {
+            self.to_owned_from_source(None)
+        }
+        #[allow(clippy::useless_conversion, clippy::needless_update)]
+        fn to_owned_from_source(
+            &self,
+            __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+        ) -> ::core::result::Result<
+            super::super::super::document_search::Vector,
+            ::buffa::DecodeError,
+        > {
+            #[allow(unused_imports)]
+            use ::buffa::alloc::string::ToString as _;
+            let _ = __buffa_src;
+            ::core::result::Result::Ok(super::super::super::document_search::Vector {
+                column: self.column.map(|s| s.to_string()),
+                values: self.values.to_vec(),
+                __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
+                ..::core::default::Default::default()
+            })
+        }
+    }
+    impl<'a> ::buffa::ViewEncode<'a> for VectorView<'a> {
+        #[allow(clippy::needless_borrow, clippy::let_and_return)]
+        fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+            #[allow(unused_imports)]
+            use ::buffa::Enumeration as _;
+            let mut size = 0u64;
+            if let Some(ref v) = self.column {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
+            if !self.values.is_empty() {
+                let payload: u64 = self.values.len() as u64
+                    * ::buffa::types::FIXED32_ENCODED_LEN as u64;
+                size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+            }
+            size += self.__buffa_unknown_fields.encoded_len() as u64;
+            ::buffa::saturate_size(size)
+        }
+        #[allow(clippy::needless_borrow)]
+        fn write_to(
+            &self,
+            _cache: &mut ::buffa::SizeCache,
+            buf: &mut impl ::buffa::EncodeSink,
+        ) {
+            #[allow(unused_imports)]
+            use ::buffa::Enumeration as _;
+            if let Some(ref v) = self.column {
+                ::buffa::types::put_string_field(1u32, v, buf);
+            }
+            if !self.values.is_empty() {
+                let payload: u64 = self.values.len() as u64
+                    * ::buffa::types::FIXED32_ENCODED_LEN as u64;
+                ::buffa::types::put_len_delimited_header(2u32, payload, buf);
+                for &v in &self.values {
+                    ::buffa::types::encode_float(v, buf);
+                }
+            }
+            self.__buffa_unknown_fields.write_to(buf);
+        }
+    }
+    /// Serializes this view as protobuf JSON.
+    ///
+    /// Implicit-presence fields with default values are omitted, `required`
+    /// fields are always emitted, explicit-presence (`optional`) fields are
+    /// emitted only when set, bytes fields are base64-encoded, and enum
+    /// values are their proto name strings.
+    ///
+    /// This impl uses `serialize_map(None)` because the number of emitted
+    /// fields depends on default-omission rules; serializers that require
+    /// known map lengths (e.g. `bincode`) will return a runtime error.
+    /// Use the owned message type for those formats.
+    impl<'__a> ::serde::Serialize for VectorView<'__a> {
+        fn serialize<__S: ::serde::Serializer>(
+            &self,
+            __s: __S,
+        ) -> ::core::result::Result<__S::Ok, __S::Error> {
+            use ::serde::ser::SerializeMap as _;
+            let mut __map = __s.serialize_map(::core::option::Option::None)?;
+            if let ::core::option::Option::Some(__v) = self.column {
+                __map.serialize_entry("column", __v)?;
+            }
+            if !self.values.is_empty() {
+                __map
+                    .serialize_entry(
+                        "values",
+                        &::buffa::json_helpers::RepeatedJson(&self.values),
+                    )?;
+            }
+            __map.end()
+        }
+    }
+    impl<'a> ::buffa::MessageName for VectorView<'a> {
+        const PACKAGE: &'static str = "scheda.v1";
+        const NAME: &'static str = "DocumentSearch.Vector";
+        const FULL_NAME: &'static str = "scheda.v1.DocumentSearch.Vector";
+        const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentSearch.Vector";
+    }
+    ::buffa::impl_default_view_instance!(VectorView);
+    ::buffa::impl_view_reborrow!(VectorView);
+    /** Self-contained, `'static` owned view of a `Vector` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`VectorView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`VectorView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+    #[derive(Clone, Debug)]
+    pub struct VectorOwnedView(::buffa::OwnedView<VectorView<'static>>);
+    impl VectorOwnedView {
+        /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+        ///
+        /// The view borrows directly from the buffer's data; the buffer is
+        /// retained inside the returned handle.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+        /// protobuf data.
+        pub fn decode(
+            bytes: ::buffa::bytes::Bytes,
+        ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+            ::core::result::Result::Ok(
+                VectorOwnedView(::buffa::OwnedView::decode(bytes)?),
+            )
+        }
+        /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+        /// max message size).
+        ///
+        /// # Errors
+        ///
+        /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+        /// exceeds the configured limits.
+        pub fn decode_with_options(
+            bytes: ::buffa::bytes::Bytes,
+            opts: &::buffa::DecodeOptions,
+        ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+            ::core::result::Result::Ok(
+                VectorOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+            )
+        }
+        /// Build from an owned message via an encode → decode round-trip.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+        /// message's encoded size exceeds the 2 GiB protobuf limit, or
+        /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+        /// somehow invalid (should not happen for well-formed messages).
+        pub fn from_owned(
+            msg: &super::super::super::document_search::Vector,
+        ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+            ::core::result::Result::Ok(
+                VectorOwnedView(::buffa::OwnedView::from_owned(msg)?),
+            )
+        }
+        /// Borrow the full [`VectorView`] with its lifetime tied to `&self`.
+        #[must_use]
+        pub fn view(&self) -> &VectorView<'_> {
+            self.0.reborrow()
+        }
+        /// Convert to the owned message type.
+        ///
+        /// Infallible: this type's constructors wire-decode their
+        /// buffer, and a view produced by wire decoding always
+        /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+        /// whose contract also governs handles converted from a raw
+        /// [`::buffa::OwnedView`].
+        #[must_use]
+        pub fn to_owned_message(&self) -> super::super::super::document_search::Vector {
+            self.0.to_owned_message()
+        }
+        /// The underlying bytes buffer.
+        #[must_use]
+        pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+            self.0.bytes()
+        }
+        /// Consume the handle, returning the underlying bytes buffer.
+        #[must_use]
+        pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+            self.0.into_bytes()
+        }
+        /// A `vector` column the Projector declares for a collection in scope.
+        ///
+        /// Field 1: `column`
+        #[must_use]
+        pub fn column(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().column
+        }
+        /// The vector: as many values as the column's vectors have, each
+        /// finite, not all 0. It must come from the embedding space of the
+        /// column (the Vault's embedder, or the same model): only its length
+        /// can be checked.
+        ///
+        /// Field 2: `values`
+        #[must_use]
+        pub fn values(&self) -> &::buffa::RepeatedView<'_, f32> {
+            &self.0.reborrow().values
+        }
+    }
+    impl ::core::convert::From<::buffa::OwnedView<VectorView<'static>>>
+    for VectorOwnedView {
+        fn from(inner: ::buffa::OwnedView<VectorView<'static>>) -> Self {
+            VectorOwnedView(inner)
+        }
+    }
+    impl ::core::convert::From<VectorOwnedView>
+    for ::buffa::OwnedView<VectorView<'static>> {
+        fn from(wrapper: VectorOwnedView) -> Self {
+            wrapper.0
+        }
+    }
+    impl ::core::convert::AsRef<::buffa::OwnedView<VectorView<'static>>>
+    for VectorOwnedView {
+        fn as_ref(&self) -> &::buffa::OwnedView<VectorView<'static>> {
+            &self.0
+        }
+    }
+    impl ::buffa::HasMessageView for super::super::super::document_search::Vector {
+        type View<'a> = VectorView<'a>;
+        type ViewHandle = VectorOwnedView;
+    }
+    impl ::serde::Serialize for VectorOwnedView {
+        fn serialize<__S: ::serde::Serializer>(
+            &self,
+            __s: __S,
+        ) -> ::core::result::Result<__S::Ok, __S::Error> {
+            ::serde::Serialize::serialize(&self.0, __s)
+        }
+    }
+}
+/// The request of `Collection.GetVectors`.
+#[derive(Clone, Debug, Default)]
+pub struct VectorSelectionView<'a> {
+    /// A `vector` column the Projector declares for the collection.
+    ///
+    /// Field 1: `column`
+    pub column: ::core::option::Option<&'a str>,
+    /// The Documents, in the order their vectors come; an id given twice
+    /// comes twice. At least one.
+    ///
+    /// Field 2: `ids`
+    pub ids: ::buffa::RepeatedView<'a, &'a str>,
+    /// As `DocumentQuery.not_before`.
+    ///
+    /// Field 3: `not_before`
+    pub not_before: ::core::option::Option<&'a str>,
+    pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
+}
+impl<'a> ::buffa::MessageView<'a> for VectorSelectionView<'a> {
+    type Owned = super::super::VectorSelection;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.column = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.not_before = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __elem = ::buffa::types::borrow_str(&mut cur)?;
+                ctx.register_element_memory(
+                    ::buffa::__private::element_footprint(&__elem),
+                )?;
+                view.ids.push(__elem);
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                let span_len = before_tag.len() - cur.len();
+                view.__buffa_unknown_fields.push_record(before_tag, span_len, ctx)?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::VectorSelection, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::VectorSelection, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::VectorSelection {
+            column: self.column.map(|s| s.to_string()),
+            ids: self.ids.iter().map(|s| s.to_string()).collect(),
+            not_before: self.not_before.map(|s| s.to_string()),
+            __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for VectorSelectionView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let Some(ref v) = self.column {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        for v in &self.ids {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.not_before {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let Some(ref v) = self.column {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        for v in &self.ids {
+            ::buffa::types::put_string_field(2u32, v, buf);
+        }
+        if let Some(ref v) = self.not_before {
+            ::buffa::types::put_string_field(3u32, v, buf);
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+}
+/// Serializes this view as protobuf JSON.
+///
+/// Implicit-presence fields with default values are omitted, `required`
+/// fields are always emitted, explicit-presence (`optional`) fields are
+/// emitted only when set, bytes fields are base64-encoded, and enum
+/// values are their proto name strings.
+///
+/// This impl uses `serialize_map(None)` because the number of emitted
+/// fields depends on default-omission rules; serializers that require
+/// known map lengths (e.g. `bincode`) will return a runtime error.
+/// Use the owned message type for those formats.
+impl<'__a> ::serde::Serialize for VectorSelectionView<'__a> {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        use ::serde::ser::SerializeMap as _;
+        let mut __map = __s.serialize_map(::core::option::Option::None)?;
+        if let ::core::option::Option::Some(__v) = self.column {
+            __map.serialize_entry("column", __v)?;
+        }
+        if !self.ids.is_empty() {
+            __map.serialize_entry("ids", &*self.ids)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.not_before {
+            __map.serialize_entry("notBefore", __v)?;
+        }
+        __map.end()
+    }
+}
+impl<'a> ::buffa::MessageName for VectorSelectionView<'a> {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "VectorSelection";
+    const FULL_NAME: &'static str = "scheda.v1.VectorSelection";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.VectorSelection";
+}
+::buffa::impl_default_view_instance!(VectorSelectionView);
+::buffa::impl_view_reborrow!(VectorSelectionView);
+/** Self-contained, `'static` owned view of a `VectorSelection` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`VectorSelectionView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`VectorSelectionView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct VectorSelectionOwnedView(::buffa::OwnedView<VectorSelectionView<'static>>);
+impl VectorSelectionOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            VectorSelectionOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            VectorSelectionOwnedView(
+                ::buffa::OwnedView::decode_with_options(bytes, opts)?,
+            ),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::VectorSelection,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            VectorSelectionOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`VectorSelectionView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &VectorSelectionView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::VectorSelection {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// A `vector` column the Projector declares for the collection.
+    ///
+    /// Field 1: `column`
+    #[must_use]
+    pub fn column(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().column
+    }
+    /// The Documents, in the order their vectors come; an id given twice
+    /// comes twice. At least one.
+    ///
+    /// Field 2: `ids`
+    #[must_use]
+    pub fn ids(&self) -> &::buffa::RepeatedView<'_, &'_ str> {
+        &self.0.reborrow().ids
+    }
+    /// As `DocumentQuery.not_before`.
+    ///
+    /// Field 3: `not_before`
+    #[must_use]
+    pub fn not_before(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().not_before
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<VectorSelectionView<'static>>>
+for VectorSelectionOwnedView {
+    fn from(inner: ::buffa::OwnedView<VectorSelectionView<'static>>) -> Self {
+        VectorSelectionOwnedView(inner)
+    }
+}
+impl ::core::convert::From<VectorSelectionOwnedView>
+for ::buffa::OwnedView<VectorSelectionView<'static>> {
+    fn from(wrapper: VectorSelectionOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<VectorSelectionView<'static>>>
+for VectorSelectionOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<VectorSelectionView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::VectorSelection {
+    type View<'a> = VectorSelectionView<'a>;
+    type ViewHandle = VectorSelectionOwnedView;
+}
+impl ::serde::Serialize for VectorSelectionOwnedView {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        ::serde::Serialize::serialize(&self.0, __s)
+    }
+}
+/// One item of `Collection.GetVectors`.
+#[derive(Clone, Debug, Default)]
+pub struct VectorItemView<'a> {
+    pub item: ::core::option::Option<
+        super::super::__buffa::view::oneof::vector_item::Item<'a>,
+    >,
+    pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
+}
+impl<'a> ::buffa::MessageView<'a> for VectorItemView<'a> {
+    type Owned = super::super::VectorItem;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __sub_ctx = ctx.descend()?;
+                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                if let Some(
+                    super::super::__buffa::view::oneof::vector_item::Item::Vector(
+                        ref mut existing,
+                    ),
+                ) = view.item
+                {
+                    ::buffa::MessageView::merge_into_view(
+                        &mut **existing,
+                        sub,
+                        __sub_ctx,
+                    )?;
+                } else {
+                    view.item = Some(
+                        super::super::__buffa::view::oneof::vector_item::Item::Vector(
+                            ::buffa::alloc::boxed::Box::new(
+                                <super::super::__buffa::view::StoredVectorView as ::buffa::MessageView>::decode_view_ctx(
+                                    sub,
+                                    __sub_ctx,
+                                )?,
+                            ),
+                        ),
+                    );
+                }
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.item = Some(
+                    super::super::__buffa::view::oneof::vector_item::Item::Absent(
+                        ::buffa::types::borrow_str(&mut cur)?,
+                    ),
+                );
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                let span_len = before_tag.len() - cur.len();
+                view.__buffa_unknown_fields.push_record(before_tag, span_len, ctx)?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::VectorItem, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::VectorItem, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::VectorItem {
+            item: match self.item.as_ref() {
+                ::core::option::Option::Some(v) => {
+                    ::core::option::Option::Some(
+                        match v {
+                            super::super::__buffa::view::oneof::vector_item::Item::Vector(
+                                v,
+                            ) => {
+                                super::super::__buffa::oneof::vector_item::Item::Vector(
+                                    ::buffa::alloc::boxed::Box::new(
+                                        v.to_owned_from_source(__buffa_src)?,
+                                    ),
+                                )
+                            }
+                            super::super::__buffa::view::oneof::vector_item::Item::Absent(
+                                v,
+                            ) => {
+                                super::super::__buffa::oneof::vector_item::Item::Absent(
+                                    v.to_string(),
+                                )
+                            }
+                        },
+                    )
+                }
+                ::core::option::Option::None => ::core::option::Option::None,
+            },
+            __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for VectorItemView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let ::core::option::Option::Some(ref v) = self.item {
+            match v {
+                super::super::__buffa::view::oneof::vector_item::Item::Vector(x) => {
+                    let __slot = __cache.reserve();
+                    let inner = x.compute_size(__cache);
+                    __cache.set(__slot, inner);
+                    size
+                        += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
+                            + inner as u64;
+                }
+                super::super::__buffa::view::oneof::vector_item::Item::Absent(x) => {
+                    size += 1u64 + ::buffa::types::string_encoded_len(x) as u64;
+                }
+            }
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        __cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let ::core::option::Option::Some(ref v) = self.item {
+            match v {
+                super::super::__buffa::view::oneof::vector_item::Item::Vector(x) => {
+                    ::buffa::types::put_len_delimited_header(
+                        1u32,
+                        u64::from(__cache.consume_next()),
+                        buf,
+                    );
+                    x.write_to(__cache, buf);
+                }
+                super::super::__buffa::view::oneof::vector_item::Item::Absent(x) => {
+                    ::buffa::types::put_string_field(2u32, x, buf);
+                }
+            }
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+}
+/// Serializes this view as protobuf JSON.
+///
+/// Implicit-presence fields with default values are omitted, `required`
+/// fields are always emitted, explicit-presence (`optional`) fields are
+/// emitted only when set, bytes fields are base64-encoded, and enum
+/// values are their proto name strings.
+///
+/// This impl uses `serialize_map(None)` because the number of emitted
+/// fields depends on default-omission rules; serializers that require
+/// known map lengths (e.g. `bincode`) will return a runtime error.
+/// Use the owned message type for those formats.
+impl<'__a> ::serde::Serialize for VectorItemView<'__a> {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        use ::serde::ser::SerializeMap as _;
+        let mut __map = __s.serialize_map(::core::option::Option::None)?;
+        if let ::core::option::Option::Some(ref __ov) = self.item {
+            match __ov {
+                super::super::__buffa::view::oneof::vector_item::Item::Vector(v) => {
+                    __map.serialize_entry("vector", v)?;
+                }
+                super::super::__buffa::view::oneof::vector_item::Item::Absent(v) => {
+                    __map.serialize_entry("absent", v)?;
+                }
+            }
+        }
+        __map.end()
+    }
+}
+impl<'a> ::buffa::MessageName for VectorItemView<'a> {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "VectorItem";
+    const FULL_NAME: &'static str = "scheda.v1.VectorItem";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.VectorItem";
+}
+::buffa::impl_default_view_instance!(VectorItemView);
+::buffa::impl_view_reborrow!(VectorItemView);
+/** Self-contained, `'static` owned view of a `VectorItem` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`VectorItemView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`VectorItemView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct VectorItemOwnedView(::buffa::OwnedView<VectorItemView<'static>>);
+impl VectorItemOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            VectorItemOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            VectorItemOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::VectorItem,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            VectorItemOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`VectorItemView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &VectorItemView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::VectorItem {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// Oneof `item`.
+    #[must_use]
+    pub fn item(
+        &self,
+    ) -> ::core::option::Option<
+        &super::super::__buffa::view::oneof::vector_item::Item<'_>,
+    > {
+        self.0.reborrow().item.as_ref()
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<VectorItemView<'static>>>
+for VectorItemOwnedView {
+    fn from(inner: ::buffa::OwnedView<VectorItemView<'static>>) -> Self {
+        VectorItemOwnedView(inner)
+    }
+}
+impl ::core::convert::From<VectorItemOwnedView>
+for ::buffa::OwnedView<VectorItemView<'static>> {
+    fn from(wrapper: VectorItemOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<VectorItemView<'static>>>
+for VectorItemOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<VectorItemView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::VectorItem {
+    type View<'a> = VectorItemView<'a>;
+    type ViewHandle = VectorItemOwnedView;
+}
+impl ::serde::Serialize for VectorItemOwnedView {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        ::serde::Serialize::serialize(&self.0, __s)
+    }
+}
+/// One vector of a Document, as the Index stored it.
+#[derive(Clone, Debug, Default)]
+pub struct StoredVectorView<'a> {
+    /// The Document.
+    ///
+    /// Field 1: `id`
+    pub id: ::core::option::Option<&'a str>,
+    /// The place of its text in the column's `text list`, from 0; 0 in a
+    /// `text` column. A text without a vector has no item.
+    ///
+    /// Field 2: `position`
+    pub position: ::core::option::Option<u32>,
+    /// The git blob id of the text the vector was made from (`git
+    /// hash-object` of its UTF-8 bytes): the same as that of the text the
+    /// caller holds now when the vector is of that text, not of one the Index
+    /// has not caught up on.
+    ///
+    /// Field 3: `digest`
+    pub digest: ::core::option::Option<&'a str>,
+    /// The vector, as the embedder gave it.
+    ///
+    /// Field 4: `values`
+    pub values: ::buffa::RepeatedView<'a, f32>,
+    pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
+}
+impl<'a> ::buffa::MessageView<'a> for StoredVectorView<'a> {
+    type Owned = super::super::StoredVector;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.id = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.position = Some(::buffa::types::decode_uint32(&mut cur)?);
+            }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.digest = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            4u32 => {
+                if tag.wire_type() == ::buffa::encoding::WireType::LengthDelimited {
+                    let payload = ::buffa::types::borrow_bytes(&mut cur)?;
+                    ::buffa::types::extend_packed_float(
+                        payload,
+                        view.values.as_mut_vec(),
+                    )?;
+                } else if tag.wire_type() == ::buffa::encoding::WireType::Fixed32 {
+                    view.values.push(::buffa::types::decode_float(&mut cur)?);
+                } else {
+                    return Err(
+                        ::buffa::encoding::wire_type_mismatch(
+                            tag,
+                            ::buffa::encoding::WireType::LengthDelimited,
+                        ),
+                    );
+                }
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                let span_len = before_tag.len() - cur.len();
+                view.__buffa_unknown_fields.push_record(before_tag, span_len, ctx)?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::StoredVector, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::StoredVector, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::StoredVector {
+            id: self.id.map(|s| s.to_string()),
+            position: self.position,
+            digest: self.digest.map(|s| s.to_string()),
+            values: self.values.to_vec(),
+            __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for StoredVectorView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(v) = self.position {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.digest {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if !self.values.is_empty() {
+            let payload: u64 = self.values.len() as u64
+                * ::buffa::types::FIXED32_ENCODED_LEN as u64;
+            size += 1u64 + ::buffa::encoding::varint_len(payload) as u64 + payload;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(v) = self.position {
+            ::buffa::types::put_uint32_field(2u32, v, buf);
+        }
+        if let Some(ref v) = self.digest {
+            ::buffa::types::put_string_field(3u32, v, buf);
+        }
+        if !self.values.is_empty() {
+            let payload: u64 = self.values.len() as u64
+                * ::buffa::types::FIXED32_ENCODED_LEN as u64;
+            ::buffa::types::put_len_delimited_header(4u32, payload, buf);
+            for &v in &self.values {
+                ::buffa::types::encode_float(v, buf);
+            }
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+}
+/// Serializes this view as protobuf JSON.
+///
+/// Implicit-presence fields with default values are omitted, `required`
+/// fields are always emitted, explicit-presence (`optional`) fields are
+/// emitted only when set, bytes fields are base64-encoded, and enum
+/// values are their proto name strings.
+///
+/// This impl uses `serialize_map(None)` because the number of emitted
+/// fields depends on default-omission rules; serializers that require
+/// known map lengths (e.g. `bincode`) will return a runtime error.
+/// Use the owned message type for those formats.
+impl<'__a> ::serde::Serialize for StoredVectorView<'__a> {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        use ::serde::ser::SerializeMap as _;
+        let mut __map = __s.serialize_map(::core::option::Option::None)?;
+        if let ::core::option::Option::Some(__v) = self.id {
+            __map.serialize_entry("id", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.position {
+            __map.serialize_entry("position", &::buffa::json_helpers::ProtoJson(&__v))?;
+        }
+        if let ::core::option::Option::Some(__v) = self.digest {
+            __map.serialize_entry("digest", __v)?;
+        }
+        if !self.values.is_empty() {
+            __map
+                .serialize_entry(
+                    "values",
+                    &::buffa::json_helpers::RepeatedJson(&self.values),
+                )?;
+        }
+        __map.end()
+    }
+}
+impl<'a> ::buffa::MessageName for StoredVectorView<'a> {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "StoredVector";
+    const FULL_NAME: &'static str = "scheda.v1.StoredVector";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.StoredVector";
+}
+::buffa::impl_default_view_instance!(StoredVectorView);
+::buffa::impl_view_reborrow!(StoredVectorView);
+/** Self-contained, `'static` owned view of a `StoredVector` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`StoredVectorView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`StoredVectorView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct StoredVectorOwnedView(::buffa::OwnedView<StoredVectorView<'static>>);
+impl StoredVectorOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            StoredVectorOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            StoredVectorOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::StoredVector,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            StoredVectorOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`StoredVectorView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &StoredVectorView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::StoredVector {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// The Document.
+    ///
+    /// Field 1: `id`
+    #[must_use]
+    pub fn id(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().id
+    }
+    /// The place of its text in the column's `text list`, from 0; 0 in a
+    /// `text` column. A text without a vector has no item.
+    ///
+    /// Field 2: `position`
+    #[must_use]
+    pub fn position(&self) -> ::core::option::Option<u32> {
+        self.0.reborrow().position
+    }
+    /// The git blob id of the text the vector was made from (`git
+    /// hash-object` of its UTF-8 bytes): the same as that of the text the
+    /// caller holds now when the vector is of that text, not of one the Index
+    /// has not caught up on.
+    ///
+    /// Field 3: `digest`
+    #[must_use]
+    pub fn digest(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().digest
+    }
+    /// The vector, as the embedder gave it.
+    ///
+    /// Field 4: `values`
+    #[must_use]
+    pub fn values(&self) -> &::buffa::RepeatedView<'_, f32> {
+        &self.0.reborrow().values
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<StoredVectorView<'static>>>
+for StoredVectorOwnedView {
+    fn from(inner: ::buffa::OwnedView<StoredVectorView<'static>>) -> Self {
+        StoredVectorOwnedView(inner)
+    }
+}
+impl ::core::convert::From<StoredVectorOwnedView>
+for ::buffa::OwnedView<StoredVectorView<'static>> {
+    fn from(wrapper: StoredVectorOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<StoredVectorView<'static>>>
+for StoredVectorOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<StoredVectorView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::StoredVector {
+    type View<'a> = StoredVectorView<'a>;
+    type ViewHandle = StoredVectorOwnedView;
+}
+impl ::serde::Serialize for StoredVectorOwnedView {
     fn serialize<__S: ::serde::Serializer>(
         &self,
         __s: __S,
@@ -7504,7 +8998,8 @@ pub struct SearchHitView<'a> {
     pub lexical_score: ::core::option::Option<f64>,
     /// The score of the vector leg, when that leg found it: `1 / (1 + d)`,
     /// with `d` the cosine distance of its text closest to the query (for
-    /// `like`, of its closest pair), so 1 for the same direction. A Document
+    /// `like`, of its closest pair), so 1 for the same direction; `d` is
+    /// computed from the full vectors, so `1 - d` is the cosine. A Document
     /// is ranked once, however many texts it has.
     ///
     /// Field 3: `vector_score`
@@ -7915,7 +9410,8 @@ impl SearchHitOwnedView {
     }
     /// The score of the vector leg, when that leg found it: `1 / (1 + d)`,
     /// with `d` the cosine distance of its text closest to the query (for
-    /// `like`, of its closest pair), so 1 for the same direction. A Document
+    /// `like`, of its closest pair), so 1 for the same direction; `d` is
+    /// computed from the full vectors, so `1 - d` is the cosine. A Document
     /// is ranked once, however many texts it has.
     ///
     /// Field 3: `vector_score`
