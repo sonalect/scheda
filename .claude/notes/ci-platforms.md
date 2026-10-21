@@ -77,6 +77,17 @@ writes `BIG = 100_000` files and commits them with git.
 
 ## Known, not fixed (each waits for the owner)
 
+- Two first opens of one clone at once (`.scheda/writer` absent) each
+  generate a writer identity and replace the file: on every platform the
+  two handles then hold different identities, and on Windows the second
+  `MoveFileExW` replace is `ACCESS_DENIED`, so that `open` fails with
+  `STORAGE` (`write::two_opens_of_one_new_path_at_once_make_one_vault_and_both_open_it`).
+  `writer::load_or_create` runs with no lock. A fix changes the locking of
+  `.scheda/` (a lock around it) or publishes without replacing (a hard
+  link, which FAT has not).
+- On windows-amd64 under Bazel the `mirror::` integration tests fail, which
+  pass under Cargo on windows-arm64: the suite times out before libtest
+  prints why.
 - `VaultInfo.path` on Windows is the verbatim form `\\?\C:\…` of
   `canonicalize` (`open_flags_reach_the_library` in the CLI tests).
 - The CLI does not link with Cargo on Windows: esaxx-rs (tokenizers, from
