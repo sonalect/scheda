@@ -7,7 +7,7 @@ edition = "2024"
 rust-version = "1.99.1"
 license = "UNLICENSED"
 repository = "https://github.com/sonalect/scheda"
-version = "0.24.0"
+version = "0.24.1"
 
 [workspace.dependencies]
 age = { version = "=0.12.1", default-features = false, features = ["armor"] }

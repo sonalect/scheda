@@ -56,7 +56,7 @@ install; without an embedder, vector search is off and the rest still works.
 The library does not score Documents for a UI, does not call a language
 model, and does not know a profession.
 
-**Status: release `0.24.0` holds the proto contract (`docs/20`), the Index
+**Status: release `0.24.1` holds the proto contract (`docs/20`), the Index
 on Lance (`docs/21`), Scheda on tokio (`docs/22`), and the fixes of the
 full review (`docs/23`), with a `vector` column that may be a `text list`,
 and a port change whose number the Index state reaches with its verdict
