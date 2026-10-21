@@ -99,7 +99,14 @@ its release workflow. Manual runs only (`workflow_dispatch`).
   the verbatim form on Windows (`common::resolved` gives the plain one).
 - `tables::tests::closing_a_vault_in_the_middle_of_a_slow_embedding_…`
   counted the embedder's calls from zero; on a loaded runner the round ran
-  on before the test looked. It now counts from the start of `close`.
+  on before the test looked. It now counts from the start of `close`. A
+  blocking port's reply stream is pulled on the blocking pool by
+  protocontract (`offload::pump`, a channel of 16): after each send it
+  starts the next item, and only the following send finds the reader gone.
+  So one portion of a blocking embedder may begin after `Close` returned
+  (seen on windows-amd64: 2 at close, 3 later), never two. Whether `Close`
+  should wait for that, or protocontract not start an item for a reader
+  that is gone, is open for the owner.
 - 64 writes queued on one handle wait 60 s at most in all (the turn is
   FIFO, the deadline runs from the call): fine alone (7 ms a write on D:),
   ABORTED with four suites at once on windows-amd64 and macos-amd64, as
@@ -141,7 +148,14 @@ writes `BIG = 100_000` files and commits them with git.
   model2vec-rs, both of its tokenizer features) builds with
   `.static_crt(true)`, `/MT`, against `/MD` of mimalloc and the rest
   (LNK2038). Bazel links it only because the toolchain's `/MD` comes after
-  esaxx's `/MT` in the compile line.
+  esaxx's `/MT` in the compile line. esaxx-rs 0.1.10 (2023) is its latest
+  release, model2vec-rs 0.3.0 its latest, and both of model2vec-rs's
+  tokenizer features turn on `tokenizers/esaxx_fast`. Only the CLI depends
+  on it. Ways out, for the owner: a Sonalect fork of esaxx-rs without
+  `static_crt(true)` under `[patch.crates-io]` (recommended: every crate
+  `/MD` as under Bazel, `cargo install --git` included), or `+crt-static`
+  for Windows MSVC in `.cargo/config.toml` (a static CRT in Cargo builds
+  only, not in `cargo install`).
 - macOS and Windows run the volume tests many times slower than Linux:
   `scheda_thin_test` and `integration_test` time out at 300 s on macOS,
   every Rust suite on windows-amd64; the Cargo unit tests take 1002 s on
