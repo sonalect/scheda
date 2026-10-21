@@ -75,6 +75,30 @@ pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<(), Erro
     write_tmp_then_rename(path, bytes, 0o600)
 }
 
+/// [`atomic_write_private`] that never replaces: `bytes` go to `path` only
+/// when no file is there, and a reader sees no file or the whole new one.
+/// Returns whether this call made the file; `false` leaves the file that
+/// another writer put there first. The temporary file is flushed, then moved
+/// to `path` by a rename that fails when `path` exists, and removed when it
+/// was not moved.
+pub(crate) fn create_private(path: &Path, bytes: &[u8]) -> Result<bool, Error> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    create_dir_private(dir).context("atomic_write: create directory")?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let (tmp, file) = create_temporary(dir, &options, &NEXT_TMP)?;
+    let placed = fill(file, bytes).and_then(|()| rename_no_replace(&tmp, path));
+    if !matches!(placed, Ok(true)) {
+        let _ = fs::remove_file(&tmp);
+    }
+    placed
+}
+
 /// Removes the temporary files of [`atomic_write`] directly in `dir`: what
 /// writes left that their process did not live to rename. The caller makes
 /// sure no write into `dir` runs meanwhile. A missing `dir` has none.
@@ -165,27 +189,30 @@ fn create_temporary(
 
 /// Writes `bytes` into `file`, the temporary file at `tmp`, flushes it to
 /// disk, and renames it over `path`.
-fn fill_then_rename(
-    mut file: fs::File,
-    tmp: &Path,
-    path: &Path,
-    bytes: &[u8],
-) -> Result<(), Error> {
+fn fill_then_rename(file: fs::File, tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    fill(file, bytes)?;
+    rename_replace(tmp, path)
+}
+
+/// Writes `bytes` into the temporary `file`, flushes it to disk, and closes
+/// it.
+fn fill(mut file: fs::File, bytes: &[u8]) -> Result<(), Error> {
     file.write_all(bytes)
         .map_err(io)
         .context("atomic_write: write temporary file")?;
     file.sync_all()
         .map_err(io)
-        .context("atomic_write: flush temporary file")?;
-    drop(file);
-    rename_replace(tmp, path)
+        .context("atomic_write: flush temporary file")
 }
 
 /// `fs::rename` cannot replace an existing file on Windows.
 fn rename_replace(tmp: &Path, path: &Path) -> Result<(), Error> {
     #[cfg(windows)]
     {
-        rename_replace_windows(tmp, path)
+        const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+        move_file(tmp, path, MOVEFILE_REPLACE_EXISTING)
+            .map_err(io)
+            .context("atomic_write: replace file")
     }
     #[cfg(not(windows))]
     {
@@ -195,11 +222,94 @@ fn rename_replace(tmp: &Path, path: &Path) -> Result<(), Error> {
     }
 }
 
-#[cfg(windows)]
-fn rename_replace_windows(tmp: &Path, path: &Path) -> Result<(), Error> {
-    use std::os::windows::ffi::OsStrExt;
+/// Renames `tmp` to `path` unless a file is there, which the one system call
+/// checks as it renames: `false` then, and `tmp` stays.
+fn rename_no_replace(tmp: &Path, path: &Path) -> Result<bool, Error> {
+    match rename_exclusive(tmp, path) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(err) => Err(io(err)).context("atomic_write: rename temporary file"),
+    }
+}
 
-    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+/// `renameat2` with `RENAME_NOREPLACE`.
+#[cfg(target_os = "linux")]
+fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::ffi::{CString, c_char, c_int, c_uint};
+    use std::os::unix::ffi::OsStrExt;
+
+    const AT_FDCWD: c_int = -100;
+    const RENAME_NOREPLACE: c_uint = 1;
+
+    unsafe extern "C" {
+        fn renameat2(
+            old_dir: c_int,
+            old: *const c_char,
+            new_dir: c_int,
+            new: *const c_char,
+            flags: c_uint,
+        ) -> c_int;
+    }
+
+    let from = CString::new(from.as_os_str().as_bytes())?;
+    let to = CString::new(to.as_os_str().as_bytes())?;
+    // SAFETY: both are NUL-terminated paths that live across the call.
+    let made = unsafe {
+        renameat2(
+            AT_FDCWD,
+            from.as_ptr(),
+            AT_FDCWD,
+            to.as_ptr(),
+            RENAME_NOREPLACE,
+        )
+    };
+    if made == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// `renamex_np` with `RENAME_EXCL`.
+#[cfg(target_os = "macos")]
+fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::ffi::{CString, c_char, c_int, c_uint};
+    use std::os::unix::ffi::OsStrExt;
+
+    const RENAME_EXCL: c_uint = 0x0000_0004;
+
+    unsafe extern "C" {
+        fn renamex_np(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int;
+    }
+
+    let from = CString::new(from.as_os_str().as_bytes())?;
+    let to = CString::new(to.as_os_str().as_bytes())?;
+    // SAFETY: both are NUL-terminated paths that live across the call.
+    if unsafe { renamex_np(from.as_ptr(), to.as_ptr(), RENAME_EXCL) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`.
+#[cfg(windows)]
+fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+    move_file(from, to, 0)
+}
+
+/// A Unix with neither call: a hard link, which no file at `to` survives
+/// either, then the old name goes.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::hard_link(from, to)?;
+    fs::remove_file(from)
+}
+
+/// `MoveFileExW` from `from` to `to` with `flags`.
+#[cfg(windows)]
+fn move_file(from: &Path, to: &Path, flags: u32) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
 
     unsafe extern "system" {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
@@ -209,12 +319,11 @@ fn rename_replace_windows(tmp: &Path, path: &Path) -> Result<(), Error> {
         path.as_os_str().encode_wide().chain(Some(0)).collect()
     }
 
-    let from = wide(tmp);
-    let to = wide(path);
+    let from = wide(from);
+    let to = wide(to);
     // SAFETY: both buffers are NUL-terminated UTF-16 from `encode_wide`.
-    let ok = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_REPLACE_EXISTING) };
-    if ok == 0 {
-        Err(io(std::io::Error::last_os_error())).context("atomic_write: replace file")
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), flags) } == 0 {
+        Err(std::io::Error::last_os_error())
     } else {
         Ok(())
     }
@@ -481,7 +590,7 @@ mod tests {
 
     use scheda_api::v1::VaultErrorCode;
 
-    use super::{Flock, atomic_write, create_temporary, rel_of, remove_temporary};
+    use super::{Flock, atomic_write, create_private, create_temporary, rel_of, remove_temporary};
     #[cfg(unix)]
     use super::{
         check_scheda_owner_only, reject_symlinks, restrict_dir, restrict_file, restrict_file_below,
@@ -609,6 +718,20 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let error = atomic_write(&file.join("child"), b"y", false).unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
+    }
+
+    #[test]
+    fn create_private_makes_a_file_once_and_keeps_the_first() {
+        let scratch = Scratch::new("create");
+        let file = scratch.0.join("dir/f");
+        assert!(create_private(&file, b"one").unwrap());
+        assert!(!create_private(&file, b"two").unwrap());
+        assert_eq!(std::fs::read(&file).unwrap(), b"one");
+        let names: Vec<_> = std::fs::read_dir(scratch.0.join("dir"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["f"], "no temporary file is left");
     }
 
     #[test]

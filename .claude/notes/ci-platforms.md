@@ -51,6 +51,14 @@ its release workflow. Manual runs only (`workflow_dispatch`).
   item was already the retry's state. With a 500 ms pause the old test hung,
   the new one passes.
 
+- Two first opens of one clone at once each generated a writer identity
+  and replaced `.scheda/writer`: two identities for one clone everywhere,
+  and on Windows the second `MoveFileExW` replace was `ACCESS_DENIED`. A
+  generated identity is now published by a rename that refuses to replace
+  (`fs::create_private`); the loser reads the winner's.
+  `writer::tests::first_loads_at_once_agree_on_one_token` failed 3 of 3
+  runs on the old code, Linux.
+
 ## Measurements
 
 Four local cores (`taskset -c 0-3`), Bazel build, one test alone:
@@ -77,14 +85,6 @@ writes `BIG = 100_000` files and commits them with git.
 
 ## Known, not fixed (each waits for the owner)
 
-- Two first opens of one clone at once (`.scheda/writer` absent) each
-  generate a writer identity and replace the file: on every platform the
-  two handles then hold different identities, and on Windows the second
-  `MoveFileExW` replace is `ACCESS_DENIED`, so that `open` fails with
-  `STORAGE` (`write::two_opens_of_one_new_path_at_once_make_one_vault_and_both_open_it`).
-  `writer::load_or_create` runs with no lock. A fix changes the locking of
-  `.scheda/` (a lock around it) or publishes without replacing (a hard
-  link, which FAT has not).
 - On windows-amd64 under Bazel the `mirror::` integration tests fail, which
   pass under Cargo on windows-arm64: the suite times out before libtest
   prints why.

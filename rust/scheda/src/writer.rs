@@ -14,7 +14,7 @@ use protovalidate_buffa::Validate;
 use scheda_api::v1::{OpenOptions, VaultErrorCode};
 
 use crate::error::{Context, Error, Fault, io};
-use crate::fs::{atomic_write_private, restrict_dir, restrict_file};
+use crate::fs::{atomic_write_private, create_private, restrict_dir, restrict_file};
 
 /// Vault-relative name of the token file.
 const FILE: &str = ".scheda/writer";
@@ -78,12 +78,41 @@ pub(crate) fn generate() -> String {
 /// the contract) wins, is checked by [`check_not_a_sequence`], and is
 /// written, so a later `open` without the option keeps the same identity. A
 /// token in the file that breaks the rules is `INVALID_ARGUMENT`.
+///
+/// A generated token is written only where no file is: of two first opens
+/// of one clone at once, one makes the file and the other takes its token,
+/// so every handle of a clone has one identity.
 pub(crate) fn load_or_create(vault: &Path, requested: Option<&str>) -> Result<String, Error> {
     if let Some(token) = requested {
         check_not_a_sequence(token)?;
-        persist(vault, token)?;
+        // Written when the file holds anything else: two opens that ask for
+        // one identity at once do not replace each other's file.
+        let line = format!("{token}\n");
+        if fs::read(path(vault)).ok().as_deref() != Some(line.as_bytes()) {
+            persist(vault, token)?;
+        }
         return Ok(token.to_owned());
     }
+    if let Some(token) = read(vault)? {
+        return Ok(token);
+    }
+    let token = generate();
+    if create(vault, &token)? {
+        return Ok(token);
+    }
+    read(vault)?.ok_or_else(|| {
+        Error::from(
+            Fault::new(
+                VaultErrorCode::Storage,
+                "the writer identity file went while another open made it",
+            )
+            .with_path(FILE),
+        )
+    })
+}
+
+/// The token in `{vault}/.scheda/writer`, `None` when there is no file.
+fn read(vault: &Path) -> Result<Option<String>, Error> {
     match fs::read(path(vault)) {
         Ok(bytes) => {
             let text = std::str::from_utf8(&bytes)
@@ -100,29 +129,42 @@ pub(crate) fn load_or_create(vault: &Path, requested: Option<&str>) -> Result<St
             check_file_token(token)
                 .map_err(|fault| fault.with_path(FILE))
                 .context("read the writer identity")?;
-            Ok(token.to_owned())
+            Ok(Some(token.to_owned()))
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            let token = generate();
-            persist(vault, &token)?;
-            Ok(token)
-        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(io(err))
             .map_err(|fault| fault.with_path(FILE))
             .context("read the writer identity"),
     }
 }
 
+/// Writes `token`, replacing what is there.
 fn persist(vault: &Path, token: &str) -> Result<(), Error> {
+    let file = prepare(vault)?;
+    atomic_write_private(&file, format!("{token}\n").as_bytes())
+        .context("write the writer identity")?;
+    restrict_file(&file)
+}
+
+/// Writes `token` when no file is there; whether it did.
+fn create(vault: &Path, token: &str) -> Result<bool, Error> {
+    let file = prepare(vault)?;
+    let made = create_private(&file, format!("{token}\n").as_bytes())
+        .context("write the writer identity")?;
+    if made {
+        restrict_file(&file)?;
+    }
+    Ok(made)
+}
+
+/// Makes `{vault}/.scheda/` owner-only; the path of the token file.
+fn prepare(vault: &Path) -> Result<PathBuf, Error> {
     let scheda = vault.join(".scheda");
     fs::create_dir_all(&scheda)
         .map_err(io)
         .context("create .scheda for the writer identity")?;
     restrict_dir(&scheda)?;
-    let file = path(vault);
-    atomic_write_private(&file, format!("{token}\n").as_bytes())
-        .context("write the writer identity")?;
-    restrict_file(&file)
+    Ok(path(vault))
 }
 
 /// True when `part` is exactly eight hex digits (a journal sequence token).
@@ -188,6 +230,30 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path(&vault.0)).unwrap(),
             format!("{first}\n")
+        );
+    }
+
+    /// Loads of one clone at once that find no identity each end with the
+    /// same token: the first to make the file, the others from it.
+    #[test]
+    fn first_loads_at_once_agree_on_one_token() {
+        let vault = Scratch::new("race");
+        let start = std::sync::Barrier::new(16);
+        let tokens: Vec<String> = std::thread::scope(|scope| {
+            let loads: Vec<_> = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        load_or_create(&vault.0, None).unwrap()
+                    })
+                })
+                .collect();
+            loads.into_iter().map(|load| load.join().unwrap()).collect()
+        });
+        assert!(tokens.iter().all(|token| *token == tokens[0]), "{tokens:?}");
+        assert_eq!(
+            std::fs::read_to_string(path(&vault.0)).unwrap(),
+            format!("{}\n", tokens[0])
         );
     }
 

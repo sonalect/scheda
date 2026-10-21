@@ -50,6 +50,15 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- Two first opens of one clone at once (no `.scheda/writer` yet) share one
+  writer identity. Each generated one and replaced the file with it, so the
+  two handles of one clone held different identities, and on Windows the
+  second replace was refused and that `open` failed with `STORAGE` ("Access
+  is denied"). A generated identity is now written only where no file is,
+  by a rename that refuses to replace (`renameat2` on Linux, `renamex_np`
+  on macOS, `MoveFileExW` on Windows), and the other open takes it from the
+  file. A requested identity (`OpenOptions.writer`) is written only when the
+  file holds another.
 - On Windows, packing a repository no longer fails with `STORAGE` ("The
   system cannot find the file specified") after a merge of packs. Windows
   keeps a file another reader has open: the removal of a merged pack could
