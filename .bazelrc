@@ -17,6 +17,12 @@ common:linux --@aspect_rules_py//py:python_version=3.14
 common:macos --@aspect_rules_py//py:python_version=3.14
 # rules_rust tests need runfiles; Windows defaults this off.
 common --enable_runfiles
+# The crates of `@scheda_cargo` build with optimizations in every
+# compilation mode, as Cargo's `[profile.dev.package."*"]` does in
+# `Cargo.toml`; the workspace's own crates keep the mode's. Unoptimized,
+# Lance trains a vector index many times slower: the volume tests of
+# `//rust/scheda:integration_test` outran their waits on a CI runner.
+common --@rules_rust//rust/settings:per_crate_rustc_flag=external/rules_rust++crate+scheda_cargo__@-Copt-level=2
 # rules_cc asks link.exe whether it supports /DEBUG:FASTLINK by reading its
 # help, which Visual Studio 2026 still prints although the linker dropped
 # the flag (LNK4315 on every link). The fastbuild feature only adds that

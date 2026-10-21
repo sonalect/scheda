@@ -31,9 +31,17 @@ API or on-disk format changes bump the minor.
   uses the output base `C:/b`, the shortest that keeps the C sources of
   zstd and libgit2 under `MAX_PATH`. It still starts by hand
   (`workflow_dispatch`); only a run on `main` saves the Bazel caches.
-- The timeout of a `small` Bazel test is 300 s (was 180 s): the Lance
-  volume tests of `//rust/scheda:integration_test` take about three
-  minutes on a four-core CI runner.
+- The third-party crates build with optimizations (`opt-level = 2`) in
+  every build of this repository, Bazel's `fastbuild` and Cargo's `dev`
+  and `test` profiles included; the workspace's own crates keep the
+  profile's level. Unoptimized, Lance trained a vector index many times
+  slower, and the volume tests of `//rust/scheda:integration_test` outran
+  their waits on a four-core CI runner: on four cores the vector index
+  test now takes 6 s instead of 34 s. A consumer's build is not affected:
+  Cargo ignores the profiles of a dependency, and Bazel the `.bazelrc` of
+  a module that is not the root.
+- The timeout of a `small` Bazel test is 300 s (was 180 s): CI runners,
+  macOS and Windows above all, are many times slower than a workstation.
 - On Windows, Bazel builds without the `fastbuild` feature of `rules_cc`,
   which passed the linker `/DEBUG:FASTLINK`: Visual Studio 2026 dropped
   the flag and warned (LNK4315) on every link.

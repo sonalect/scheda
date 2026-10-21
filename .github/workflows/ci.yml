@@ -332,7 +332,8 @@ jobs:
           cargo clippy --locked --workspace --all-targets --all-features
           cargo clippy --locked -p scheda --all-targets --no-default-features
 
-      - name: Test
+      # The library first: a failure of the CLI must not hide its results.
+      - name: Test the library
         # Bazel's test environment (`.bazelrc`): the runner's git
         # configuration must not change outcomes.
         env:
@@ -341,8 +342,15 @@ jobs:
           GIT_CONFIG_SYSTEM: ""
         run: |
           set -euo pipefail
-          cargo test --locked --workspace --all-features
+          cargo test --locked -p scheda -p scheda-api -p scheda-blocking --all-features
           cargo test --locked -p scheda --no-default-features
+
+      - name: Test the CLI
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: ""
+          GIT_CONFIG_SYSTEM: ""
+        run: cargo test --locked -p scheda-cli
 
       - name: Disk space
         if: always()

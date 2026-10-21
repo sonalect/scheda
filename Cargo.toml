@@ -54,6 +54,13 @@ warnings = "deny"
 [workspace.lints.clippy]
 all = "deny"
 
+# Dependencies build with optimizations in dev and test builds too, as
+# `.bazelrc` has Bazel build `@scheda_cargo`: unoptimized, Lance trains a
+# vector index many times slower. The workspace's own crates stay
+# unoptimized.
+[profile.dev.package."*"]
+opt-level = 2
+
 # Cargo `--release` only. Bazel rustc flags are unchanged.
 [profile.release]
 codegen-units = 1
