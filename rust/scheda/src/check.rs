@@ -141,8 +141,12 @@ pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
         Err(error) => return Ok(vec![marker_problem(error)?]),
     }
     let mut problems = check_scheda_owner_only(path).context("check: .scheda")?;
-    problems.extend(check_unmerged(repos)?);
-    problems.extend(check_perimeter(repos)?);
+    // A Vault without a work tree has no index and no files to compare.
+    let files = !vault.has_no_files();
+    if files {
+        problems.extend(check_unmerged(repos)?);
+        problems.extend(check_perimeter(repos)?);
+    }
     let (declarations, faults) =
         collection::load_each(views.of(Repo::Main)).context("check: the collections")?;
     problems.extend(faults.iter().map(problem_of));
@@ -153,7 +157,9 @@ pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
         &views,
         &declarations,
     )?);
-    problems.extend(check_changed(repos, &declarations)?);
+    if files {
+        problems.extend(check_changed(repos, &declarations)?);
+    }
     Ok(problems)
 }
 

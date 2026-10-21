@@ -84,11 +84,18 @@ struct Fallback {
     armed: bool,
 }
 
-/// The path of the merge lock of the Vault `repo` belongs to: the main
-/// repository's work tree is the Vault, the nested one is `.isolated/`
-/// under it. `None` for a repository without a work tree.
+/// The path of the merge lock of the Vault `repo` belongs to. The Vault is
+/// the parent of the repository's `.git` folder, or the parent of that
+/// folder's own parent when the repository is the nested one in
+/// `.isolated/`. It does not depend on a work tree: a repository without
+/// one (`core.bare`) gets the same lock file. `None` for a repository whose
+/// `.git` is not a folder under a Vault.
 pub(crate) fn lock_file_of(repo: &Repository) -> Option<PathBuf> {
-    let work = repo.workdir()?;
+    let git = repo.commondir();
+    if git.file_name().is_none_or(|name| name != ".git") {
+        return None;
+    }
+    let work = git.parent()?;
     let root = if work.file_name().is_some_and(|name| name == isolated::DIR) {
         work.parent()?
     } else {
@@ -98,7 +105,7 @@ pub(crate) fn lock_file_of(repo: &Repository) -> Option<PathBuf> {
 }
 
 /// Adds the fallback to the database of `repo` (a repository opened for a
-/// lease). A repository without a work tree gets none.
+/// lease). A repository that is not a `.git` folder of a Vault gets none.
 ///
 /// # Errors
 ///
@@ -410,6 +417,24 @@ pub(crate) mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn the_lock_file_is_the_vaults_for_both_modes_and_both_repositories() {
+        let scratch = Scratch::new("lock-file-of");
+        crate::repo::init_library().unwrap();
+        let root = scratch.0.canonicalize().unwrap();
+        for (dir, no_files) in [("with", false), ("without", true)] {
+            let vault = root.join(dir);
+            crate::repo::init_repository(&vault, no_files).unwrap();
+            crate::repo::init_repository(&vault.join(".isolated"), no_files).unwrap();
+            let want = vault.join(".scheda/pack.lock");
+            for repo_dir in [vault.clone(), vault.join(".isolated")] {
+                let repo = Repository::open(&repo_dir).unwrap();
+                assert_eq!(repo.is_bare(), no_files);
+                assert_eq!(lock_file_of(&repo), Some(want.clone()), "{repo_dir:?}");
+            }
+        }
     }
 
     fn vault(name: &str) -> (Scratch, Repository) {

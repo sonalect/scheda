@@ -486,6 +486,46 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                     });
             }
         }
+        if let ::core::option::Option::Some(__cel_inner) = self.work_tree.as_ref() {
+            let __cel_this = ({
+                use ::buffa::Enumeration as _;
+                (*__cel_inner).to_i32() as i64
+            });
+            if !(([(0i64 as i64), (1i64 as i64), (2i64 as i64)].as_slice())
+                .iter()
+                .any(|__x| (*__x) == ((__cel_this))))
+            {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(12i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("work_tree")), field_type
+                                : Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "open_options.work_tree.defined",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "must be a defined WorkTree value",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
         if let Some(index) = violations
             .iter()
             .position(|v| v.rule_id == "__cel_runtime_error__")
@@ -988,6 +1028,46 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                         ),
                         message: ::std::borrow::Cow::Borrowed(
                             "must be a defined OpenMode value",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
+        if let ::core::option::Option::Some(__cel_inner) = self.work_tree.as_ref() {
+            let __cel_this = ({
+                use ::buffa::Enumeration as _;
+                (*__cel_inner).to_i32() as i64
+            });
+            if !(([(0i64 as i64), (1i64 as i64), (2i64 as i64)].as_slice())
+                .iter()
+                .any(|__x| (*__x) == ((__cel_this))))
+            {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(12i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("work_tree")), field_type
+                                : Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "open_options.work_tree.defined",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "must be a defined WorkTree value",
                         ),
                         for_key: false,
                     });

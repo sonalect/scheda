@@ -8,6 +8,38 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- `OpenOptions.work_tree`, `VaultInfo.work_tree`, and the flag
+  `--work-tree <files|none>`: whether a Vault has a folder of files. The
+  option applies when `open` makes a Vault; on a Vault that exists, a set
+  value must be the Vault's own, or `open` fails with `INVALID_ARGUMENT`.
+  `Vault.Info` reports `WORK_TREE_FILES` or `WORK_TREE_NONE`. A Vault that
+  `open` makes with `WORK_TREE_NONE` has no Document files and no git
+  index: every write, batch, collection change, and journal append stores
+  its objects and moves the branch, and nothing else. It keeps no reflog
+  (`core.logAllRefUpdates = false`) and notes no paths in `commit.lock`.
+  Both repositories (the Vault's and the nested one of isolated
+  collections) are marked `core.bare = true`, so a person reads the Vault
+  with `git log` and `git show HEAD:<path>`, and git refuses the commands
+  that need a work tree (`git status`, `git commit`). `Vault.Check` of such
+  a Vault compares nothing with files. A clone of a mirror with this option
+  is made bare (`git clone --bare` into `.git`, no checkout), and `Pull` and
+  `Sync` of such a Vault fetch, join, and fast-forward by moving the branch
+  only: no file, no git index, no reflog; a conflict is `MIRROR_CONFLICT` as
+  before and writes nothing. The mode is local and not committed, so a clone
+  with files may come from a mirror made without them, and the reverse.
+- `OpenOptions.initial_branch` and the flag `--initial-branch <NAME>`: the
+  branch a Vault that `open` makes starts on. A name that is not a valid
+  branch name is `INVALID_ARGUMENT`, and nothing is written. Unset keeps
+  git's `init.defaultBranch`, or `main`. It holds with files and without. A
+  new Vault and a clone of an empty mirror start on it (the first sync
+  pushes it); a mirror that has the branch is cloned onto it whatever its
+  `HEAD` names; a mirror that holds commits but not the branch is
+  `INVALID_ARGUMENT` and leaves nothing at the path, told from the clone's
+  own references. Unset, a clone follows the mirror's `HEAD`. An attach to
+  an existing Vault does not check it.
+
 ### Changed
 
 - A write, a batch of Documents, and the join of a pull each store their

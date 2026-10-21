@@ -23,6 +23,9 @@ measure speed or memory. The owner's decision (21 October 2026).
   `std::env::temp_dir()` (`/tmp`, a tmpfs). Never under `target/`, the
   repository, or the home folder. A new scratch helper takes its base the
   same way: `std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from)`.
+- When `/tmp` or `/dev/shm` fill up, by space or by number of files,
+  remove the old test leftovers (`scheda-*` folders that no running test
+  uses) without asking and go on (the owner's decision, 22 October 2026).
 
 ```rust
 // BAD — in the gate

@@ -76,6 +76,19 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 11: `filter_max_depth`
     pub filter_max_depth: ::core::option::Option<u32>,
+    /// Whether the Vault has a folder of files beside its stored state. It
+    /// applies when `open` makes a Vault, a new one or a clone. On an attach
+    /// to a Vault that exists, a set value must be the Vault's own, or the
+    /// open fails with `INVALID_ARGUMENT`. Unset: `WORK_TREE_FILES`.
+    ///
+    /// Field 12: `work_tree`
+    pub work_tree: ::core::option::Option<::buffa::EnumValue<super::super::WorkTree>>,
+    /// The branch a Vault that `open` makes starts on, a new one or a clone's
+    /// first write. A name that is not a valid branch name is
+    /// `INVALID_ARGUMENT`. Unset: git's `init.defaultBranch`, or `main`.
+    ///
+    /// Field 13: `initial_branch`
+    pub initial_branch: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
@@ -231,6 +244,22 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                 )?;
                 view.filter_max_depth = Some(::buffa::types::decode_uint32(&mut cur)?);
             }
+            12u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.work_tree = Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(&mut cur)?),
+                );
+            }
+            13u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.initial_branch = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -288,6 +317,8 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
             },
             index_wait_timeout_ms: self.index_wait_timeout_ms,
             filter_max_depth: self.filter_max_depth,
+            work_tree: self.work_tree,
+            initial_branch: self.initial_branch.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -347,6 +378,12 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         if let Some(v) = self.filter_max_depth {
             size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.work_tree {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
+        if let Some(ref v) = self.initial_branch {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -405,6 +442,12 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         }
         if let Some(v) = self.filter_max_depth {
             ::buffa::types::put_uint32_field(11u32, v, buf);
+        }
+        if let Some(ref v) = self.work_tree {
+            ::buffa::types::put_int32_field(12u32, v.to_i32(), buf);
+        }
+        if let Some(ref v) = self.initial_branch {
+            ::buffa::types::put_string_field(13u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -481,6 +524,12 @@ impl<'__a> ::serde::Serialize for OpenOptionsView<'__a> {
                     "filterMaxDepth",
                     &::buffa::json_helpers::ProtoJson(&__v),
                 )?;
+        }
+        if let ::core::option::Option::Some(ref __v) = self.work_tree {
+            __map.serialize_entry("workTree", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.initial_branch {
+            __map.serialize_entry("initialBranch", __v)?;
         }
         __map.end()
     }
@@ -683,6 +732,27 @@ impl OpenOptionsOwnedView {
     #[must_use]
     pub fn filter_max_depth(&self) -> ::core::option::Option<u32> {
         self.0.reborrow().filter_max_depth
+    }
+    /// Whether the Vault has a folder of files beside its stored state. It
+    /// applies when `open` makes a Vault, a new one or a clone. On an attach
+    /// to a Vault that exists, a set value must be the Vault's own, or the
+    /// open fails with `INVALID_ARGUMENT`. Unset: `WORK_TREE_FILES`.
+    ///
+    /// Field 12: `work_tree`
+    #[must_use]
+    pub fn work_tree(
+        &self,
+    ) -> ::core::option::Option<::buffa::EnumValue<super::super::WorkTree>> {
+        self.0.reborrow().work_tree
+    }
+    /// The branch a Vault that `open` makes starts on, a new one or a clone's
+    /// first write. A name that is not a valid branch name is
+    /// `INVALID_ARGUMENT`. Unset: git's `init.defaultBranch`, or `main`.
+    ///
+    /// Field 13: `initial_branch`
+    #[must_use]
+    pub fn initial_branch(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().initial_branch
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<OpenOptionsView<'static>>>

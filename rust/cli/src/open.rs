@@ -8,9 +8,9 @@ use scheda::Error;
 use scheda::v1::embedder_ref::EmbedderRef;
 use scheda::v1::encryption::Secret;
 use scheda::v1::reranker_ref::RerankerRef;
-use scheda::v1::{Author, Encryption, OpenMode, OpenOptions, VaultOpening};
+use scheda::v1::{Author, Encryption, OpenMode, OpenOptions, VaultOpening, WorkTree};
 
-use crate::args::{Cli, ModeArg};
+use crate::args::{Cli, ModeArg, WorkTreeArg};
 use crate::stdio::{invalid, unreadable};
 use crate::{http, model2vec, projector};
 
@@ -46,6 +46,15 @@ fn options(cli: &Cli) -> Result<OpenOptions, Error> {
             ModeArg::OpenExisting => OpenMode::OPEN_MODE_OPEN_EXISTING,
             ModeArg::CreateNew => OpenMode::OPEN_MODE_CREATE_NEW,
         });
+    }
+    if let Some(tree) = cli.work_tree {
+        options = options.with_work_tree(match tree {
+            WorkTreeArg::Files => WorkTree::WORK_TREE_FILES,
+            WorkTreeArg::None => WorkTree::WORK_TREE_NONE,
+        });
+    }
+    if let Some(branch) = &cli.initial_branch {
+        options = options.with_initial_branch(branch.as_str());
     }
     if let Some(mirror) = &cli.mirror {
         options = options.with_mirror(mirror.as_str());

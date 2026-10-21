@@ -13,7 +13,7 @@ use git2::Oid;
 use scheda_api::v1::embedder_ref::EmbedderRef;
 use scheda_api::v1::projector_ref::ProjectorRef;
 use scheda_api::v1::reranker_ref::RerankerRef;
-use scheda_api::v1::{Encryption, OpenMode, OpenOptions, VaultErrorCode, VaultInfo};
+use scheda_api::v1::{Encryption, OpenMode, OpenOptions, VaultErrorCode, VaultInfo, WorkTree};
 use scheda_blocking::{Blocking, blocking};
 use tokio::time::Instant;
 
@@ -221,7 +221,12 @@ impl Vault {
             .with_path(self.path.to_string_lossy().into_owned())
             .with_index_path(self.index().root().to_string_lossy().into_owned())
             .with_writer(self.writer.clone())
-            .with_version(self.state_now(cx)?.token()))
+            .with_version(self.state_now(cx)?.token())
+            .with_work_tree(if self.has_no_files() {
+                WorkTree::WORK_TREE_NONE
+            } else {
+                WorkTree::WORK_TREE_FILES
+            }))
     }
 
     /// The stored state of the Vault now: `HEAD` of the Vault's repository
@@ -333,6 +338,11 @@ impl Vault {
             .as_ref()
             .filter(|loaded| loaded.head == head)
             .map(|loaded| Arc::clone(&loaded.declarations)))
+    }
+
+    /// Whether the Vault has no work tree, as read when it was opened.
+    pub(crate) fn has_no_files(&self) -> bool {
+        self.committer.has_no_files()
     }
 
     /// The repositories of the Vault.
@@ -494,7 +504,44 @@ fn check_options(options: &OpenOptions) -> Result<(), Error> {
         )
         .into());
     }
+    if let Some(name) = options.initial_branch.as_deref() {
+        match git2::Branch::name_is_valid(name) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(Fault::new(
+                    VaultErrorCode::InvalidArgument,
+                    format!("the initial branch {name:?} is not a valid branch name"),
+                )
+                .into());
+            }
+            Err(err) => return Err(crate::error::lib_fault(err).into()),
+        }
+    }
     Ok(())
+}
+
+/// The mode of the Vault at `path` against `options.work_tree`: a set value
+/// must be the Vault's own, and an unset one passes. Reads the Vault's
+/// local configuration only.
+async fn check_work_tree(path: &Path, options: &OpenOptions) -> Result<(), Error> {
+    let wanted = match options.work_tree.and_then(|tree| tree.as_known()) {
+        None | Some(WorkTree::WORK_TREE_UNSPECIFIED) => return Ok(()),
+        Some(tree) => tree,
+    };
+    let at = path.to_path_buf();
+    let none = blocking(move |_cx| repo::has_no_files(&at).map_err(Error::from)).await?;
+    let has = if none {
+        WorkTree::WORK_TREE_NONE
+    } else {
+        WorkTree::WORK_TREE_FILES
+    };
+    if wanted == has {
+        return Ok(());
+    }
+    Err(refusal(
+        VaultErrorCode::InvalidArgument,
+        "the work_tree asked for is not the mode of this Vault",
+    ))
 }
 
 /// What `open_at` returns: the Vault, and whether it existed before this
@@ -520,6 +567,7 @@ fn open_at(
                         "the path holds a Vault",
                     ));
                 }
+                check_work_tree(&path, &options).await?;
                 let vault = open_existing(path, options)
                     .await
                     .context("Vault::open: open the Vault")?;
@@ -534,10 +582,13 @@ fn open_at(
                     VaultErrorCode::AlreadyExists,
                     "the path is a git work tree",
                 )),
-                _ => mark_and_open(path, options)
-                    .await
-                    .context("Vault::open: mark the work tree")
-                    .map(|vault| (vault, false)),
+                _ => {
+                    check_work_tree(&path, &options).await?;
+                    mark_and_open(path, options)
+                        .await
+                        .context("Vault::open: mark the work tree")
+                        .map(|vault| (vault, false))
+                }
             },
             Spot::Other => match mode {
                 OpenMode::OPEN_MODE_OPEN_EXISTING => Err(refusal(
@@ -677,7 +728,10 @@ async fn make_new(path: PathBuf, options: OpenOptions, mode: OpenMode) -> Opened
             .context("clone the mirror");
     }
     let at = path.clone();
-    match blocking(move |cx| claim(cx, &at, mode)).await? {
+    let no_files =
+        options.work_tree.and_then(|tree| tree.as_known()) == Some(WorkTree::WORK_TREE_NONE);
+    let branch = options.initial_branch.clone();
+    match blocking(move |cx| claim(cx, &at, mode, no_files, branch.as_deref())).await? {
         Claim::Made => {}
         Claim::Taken => wait_for_work_tree(&path).await?,
     }
@@ -686,13 +740,19 @@ async fn make_new(path: PathBuf, options: OpenOptions, mode: OpenMode) -> Opened
 
 /// Creates the folder and its `.git`, the claim on the path, and makes the
 /// repository when the claim is this call's.
-fn claim(_cx: &Blocking, path: &Path, mode: OpenMode) -> Result<Claim, Error> {
+fn claim(
+    _cx: &Blocking,
+    path: &Path,
+    mode: OpenMode,
+    no_files: bool,
+    branch: Option<&str>,
+) -> Result<Claim, Error> {
     fs::create_dir_all(path)
         .map_err(io)
         .context("create the folder")?;
     match fs::create_dir(path.join(".git")) {
         Ok(()) => {
-            init_repository(path)?;
+            init_repository(path, no_files, branch)?;
             Ok(Claim::Made)
         }
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -771,7 +831,25 @@ async fn clone_new(path: PathBuf, url: String, options: OpenOptions, mode: OpenM
 /// The clone of `url` in the staging folder `place`, looked at, and given
 /// its marker when it has none.
 async fn prepare_clone(place: &Path, url: &str, options: &OpenOptions) -> Result<(), Error> {
-    git::clone(url, place).await.context("clone")?;
+    let no_files =
+        options.work_tree.and_then(|tree| tree.as_known()) == Some(WorkTree::WORK_TREE_NONE);
+    if no_files {
+        // A bare clone straight into the git folder: no checkout, no index,
+        // no reflog. The mode is local, so the mirror's own is not read.
+        let git_dir = place.join(".git");
+        git::clone_bare(url, &git_dir).await.context("clone")?;
+        let marked = git_dir.clone();
+        blocking(move |_cx| Ok(repo::mark_no_files_at(&marked)?)).await?;
+        if let Some(name) = options.initial_branch.clone() {
+            blocking(move |_cx| Ok(repo::select_clone_branch(&git_dir, true, &name)?)).await?;
+        }
+    } else {
+        git::clone(url, place).await.context("clone")?;
+        if let Some(name) = options.initial_branch.clone() {
+            let at = place.to_path_buf();
+            blocking(move |_cx| Ok(repo::select_clone_branch(&at, false, &name)?)).await?;
+        }
+    }
     let at = place.to_path_buf();
     let spot = blocking(move |cx| {
         repo::enable_long_paths_at(&at).context("set up the clone")?;
@@ -849,8 +927,8 @@ fn place_clone(
 }
 
 /// Makes the git repository in `path`, whose `.git` this call has just made.
-fn init_repository(path: &Path) -> Result<(), Error> {
-    let made = repo::init_repository(path);
+fn init_repository(path: &Path, no_files: bool, branch: Option<&str>) -> Result<(), Error> {
+    let made = repo::init_repository_on(path, no_files, branch);
     if made.is_err() {
         let _ = fs::remove_dir_all(path.join(".git"));
     }
@@ -1065,7 +1143,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use scheda_api::v1::embedder_ref::EmbedderRef;
-    use scheda_api::v1::{OpenOptions, VaultErrorCode};
+    use scheda_api::v1::{OpenOptions, VaultErrorCode, WorkTree};
 
     use super::Vault;
     use crate::git::{git, isolate_test_git_env};
@@ -1113,6 +1191,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(again.writer, "alice");
+    }
+
+    #[tokio::test]
+    async fn an_attach_with_a_work_tree_that_is_not_the_vaults_is_refused() {
+        let scratch = Scratch::vault("work-tree");
+        let none = OpenOptions::default().with_work_tree(WorkTree::WORK_TREE_NONE);
+        let error = open(&scratch.0, none).await.unwrap_err();
+        assert!(error.is(VaultErrorCode::InvalidArgument), "{error}");
+        for tree in [WorkTree::WORK_TREE_FILES, WorkTree::WORK_TREE_UNSPECIFIED] {
+            let vault = open(&scratch.0, OpenOptions::default().with_work_tree(tree))
+                .await
+                .unwrap();
+            vault.close().await.unwrap();
+        }
+        let vault = open(&scratch.0, OpenOptions::default()).await.unwrap();
+        let info = step(&vault, |cx, vault| vault.info(cx)).await.unwrap();
+        assert_eq!(
+            info.work_tree.and_then(|tree| tree.as_known()),
+            Some(WorkTree::WORK_TREE_FILES)
+        );
+        vault.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_bad_initial_branch_is_refused_before_the_folder_is_made() {
+        let scratch = Scratch::vault("bad-branch");
+        let missing = scratch.0.join("new-vault");
+        let error = open(
+            &missing,
+            OpenOptions::default().with_initial_branch("bad..name"),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.is(VaultErrorCode::InvalidArgument), "{error}");
+        assert!(!missing.exists());
+        let vault = open(
+            &missing,
+            OpenOptions::default().with_initial_branch("trunk"),
+        )
+        .await
+        .unwrap();
+        vault.close().await.unwrap();
     }
 
     #[tokio::test]

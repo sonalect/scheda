@@ -93,6 +93,24 @@ message OpenOptions {
       lte: 100
     }
   }];
+  // Whether the Vault has a folder of files beside its stored state. It
+  // applies when `open` makes a Vault, a new one or a clone. On an attach
+  // to a Vault that exists, a set value must be the Vault's own, or the
+  // open fails with `INVALID_ARGUMENT`. Unset: `WORK_TREE_FILES`.
+  WorkTree work_tree = 12 [(buf.validate.field) = {
+    enum: {defined_only: true}
+    cel: [
+      {
+        id: "open_options.work_tree.defined"
+        message: "must be a defined WorkTree value"
+        expression: "this in [0, 1, 2]"
+      }
+    ]
+  }];
+  // The branch a Vault that `open` makes starts on, a new one or a clone's
+  // first write. A name that is not a valid branch name is
+  // `INVALID_ARGUMENT`. Unset: git's `init.defaultBranch`, or `main`.
+  string initial_branch = 13;
 }
 
 // A key to sign commits with. Scheda names the key only; the secret stays
@@ -180,4 +198,16 @@ message Encryption {
       }
     ];
   }
+}
+
+// Whether a Vault has a folder of files beside its stored state.
+enum WorkTree {
+  // As `WORK_TREE_FILES`.
+  WORK_TREE_UNSPECIFIED = 0;
+  // The Vault has a folder of files: every Document is a file in it, and
+  // any tool can read them.
+  WORK_TREE_FILES = 1;
+  // The Vault has no folder of files: its Documents live in the stored
+  // state only.
+  WORK_TREE_NONE = 2;
 }

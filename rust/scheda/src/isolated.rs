@@ -74,7 +74,8 @@ pub(crate) fn ensure(vault: &Path) -> Result<(), Error> {
         .context("create .isolated")?;
     restrict_dir(&nested)?;
     if !repo::is_work_tree(&nested)? {
-        repo::init_repository(&nested).context("make the isolated repository")?;
+        let no_files = repo::has_no_files(vault)?;
+        repo::init_repository(&nested, no_files).context("make the isolated repository")?;
     }
     Ok(())
 }

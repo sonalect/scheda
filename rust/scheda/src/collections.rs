@@ -311,7 +311,10 @@ impl crate::vault::Vault {
         }
         let changes: Vec<Change> = changes.into_values().collect();
         let head = lock.commit_in(&snap, &message(&lines), &changes)?;
-        places.finish(root)?;
+        // A Vault without a work tree has no folders to make or remove.
+        if !lock.has_no_files() {
+            places.finish(root)?;
+        }
         let pushable = head != snap.commit();
         self.remember(head, Arc::new(declarations))?;
         Ok((outcomes, pushable))

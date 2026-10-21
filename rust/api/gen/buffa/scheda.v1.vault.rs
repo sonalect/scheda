@@ -138,6 +138,17 @@ pub struct VaultInfo {
     /// Field 4: `version`
     #[serde(rename = "version", skip_serializing_if = "::core::option::Option::is_none")]
     pub version: ::core::option::Option<::buffa::alloc::string::String>,
+    /// Whether the Vault has a folder of files: `WORK_TREE_FILES` or
+    /// `WORK_TREE_NONE`, never `WORK_TREE_UNSPECIFIED`.
+    ///
+    /// Field 5: `work_tree`
+    #[serde(
+        rename = "workTree",
+        alias = "work_tree",
+        with = "::buffa::json_helpers::opt_enum",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub work_tree: ::core::option::Option<::buffa::EnumValue<WorkTree>>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -149,6 +160,7 @@ impl ::core::fmt::Debug for VaultInfo {
             .field("index_path", &self.index_path)
             .field("writer", &self.writer)
             .field("version", &self.version)
+            .field("work_tree", &self.work_tree)
             .finish()
     }
 }
@@ -200,6 +212,16 @@ impl VaultInfo {
         self.version = Some(value.into());
         self
     }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::work_tree`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_work_tree(
+        mut self,
+        value: impl Into<::buffa::EnumValue<WorkTree>>,
+    ) -> Self {
+        self.work_tree = Some(value.into());
+        self
+    }
 }
 ::buffa::impl_default_instance!(VaultInfo);
 impl ::buffa::MessageName for VaultInfo {
@@ -233,6 +255,9 @@ impl ::buffa::Message for VaultInfo {
         if let Some(ref v) = self.version {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.work_tree {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -254,6 +279,9 @@ impl ::buffa::Message for VaultInfo {
         }
         if let Some(ref v) = self.version {
             ::buffa::types::put_string_field(4u32, v, buf);
+        }
+        if let Some(ref v) = self.work_tree {
+            ::buffa::types::put_int32_field(5u32, v.to_i32(), buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -310,6 +338,15 @@ impl ::buffa::Message for VaultInfo {
                     buf,
                 )?;
             }
+            5u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.work_tree = ::core::option::Option::Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(buf)?),
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -322,6 +359,7 @@ impl ::buffa::Message for VaultInfo {
         self.index_path = ::core::option::Option::None;
         self.writer = ::core::option::Option::None;
         self.version = ::core::option::Option::None;
+        self.work_tree = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

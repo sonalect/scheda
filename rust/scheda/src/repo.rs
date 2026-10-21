@@ -214,15 +214,24 @@ pub(crate) fn is_work_tree(dir: &Path) -> Result<bool, Fault> {
     Ok(is_top_level(&repo, dir))
 }
 
-/// Whether the work tree of `repo` is the folder `dir`.
+/// Whether `repo` is the repository of the folder `dir`: its work tree is
+/// `dir`, or, for a repository without a work tree (`core.bare`), its git
+/// folder is `dir/.git`. A bare repository whose own folder is `dir` is not.
 fn is_top_level(repo: &Repository, dir: &Path) -> bool {
-    match (repo.workdir().map(Path::canonicalize), dir.canonicalize()) {
-        (Some(Ok(work)), Ok(dir)) => work == dir,
-        _ => false,
+    let Ok(dir) = dir.canonicalize() else {
+        return false;
+    };
+    match repo.workdir() {
+        Some(work) => work.canonicalize().is_ok_and(|work| work == dir),
+        None => repo
+            .path()
+            .canonicalize()
+            .is_ok_and(|git| git == dir.join(".git")),
     }
 }
 
-/// Succeeds when `dir` is the top level of a git work tree. A bare
+/// Succeeds when `dir` is the top level of a git work tree, or of a Vault
+/// without one (its `.git` folder holds `core.bare = true`). A bare
 /// repository is `FAILED_PRECONDITION`; a folder inside a work tree that is
 /// not its top level is `FAILED_PRECONDITION` too; a folder with no
 /// repository at all is the library's failure.
@@ -231,7 +240,7 @@ pub(crate) fn require_work_tree(dir: &Path) -> Result<(), Fault> {
     // The folders above are searched too, to tell "inside a work tree" from
     // "no work tree at all".
     let repo = Repository::discover(dir).map_err(|err| open_fault(dir, true, err))?;
-    if repo.is_bare() {
+    if repo.is_bare() && !is_top_level(&repo, dir) {
         return Err(Fault::new(
             VaultErrorCode::FailedPrecondition,
             "the path is a bare git repository, not a work tree",
@@ -266,6 +275,23 @@ pub(crate) fn origin_of(repo: &Repository) -> Result<Option<String>, Fault> {
     }
 }
 
+/// Whether the repository at `dir` has no folder of files: `core.bare` in
+/// its own configuration (the local level), `true` meaning none. A missing
+/// key is a repository with files.
+pub(crate) fn has_no_files(dir: &Path) -> Result<bool, Fault> {
+    init_library()?;
+    let repo = Repository::open(dir).map_err(|err| open_fault(dir, false, err))?;
+    let config = repo
+        .config()
+        .and_then(|config| config.open_level(git2::ConfigLevel::Local))
+        .map_err(lib_fault)?;
+    match config.get_bool("core.bare") {
+        Ok(bare) => Ok(bare),
+        Err(err) if err.code() == ErrorCode::NotFound => Ok(false),
+        Err(err) => Err(lib_fault(err)),
+    }
+}
+
 /// Sets `core.longpaths` in the repository at `dir`, a clone made by the
 /// command line.
 pub(crate) fn enable_long_paths_at(dir: &Path) -> Result<(), Fault> {
@@ -290,12 +316,139 @@ fn default_branch() -> String {
 /// `main`), with `core.longpaths` set so that a 255-byte file name fits a
 /// long absolute path on Windows. A folder `.git` that is there already and
 /// empty is the claim of the caller and is filled in.
-pub(crate) fn init_repository(dir: &Path) -> Result<(), Fault> {
+///
+/// With `no_files` the repository is marked as one without a work tree:
+/// `core.bare = true` and `core.logAllRefUpdates = false` in its local
+/// configuration, so git refuses the commands that need files and keeps no
+/// reflog. Its git folder stays `dir/.git`.
+pub(crate) fn init_repository(dir: &Path, no_files: bool) -> Result<(), Fault> {
+    init_repository_on(dir, no_files, None)
+}
+
+/// [`init_repository`] on the branch `branch` when it is set (already
+/// checked to be a valid name), else on the default one.
+pub(crate) fn init_repository_on(
+    dir: &Path,
+    no_files: bool,
+    branch: Option<&str>,
+) -> Result<(), Fault> {
     init_library()?;
     let mut options = RepositoryInitOptions::new();
-    options.initial_head(&default_branch()).mkpath(true);
+    let name = branch.map_or_else(default_branch, str::to_owned);
+    options.initial_head(&name).mkpath(true);
     let repo = Repository::init_opts(dir, &options).map_err(lib_fault)?;
-    enable_long_paths(&repo)
+    enable_long_paths(&repo)?;
+    if no_files {
+        set_no_files(&repo)?;
+    }
+    Ok(())
+}
+
+/// Marks `repo` as a repository without a work tree: `core.bare = true` and
+/// no reflog, in its local configuration.
+fn set_no_files(repo: &Repository) -> Result<(), Fault> {
+    let mut config = repo
+        .config()
+        .and_then(|config| config.open_level(git2::ConfigLevel::Local))
+        .map_err(lib_fault)?;
+    config.set_bool("core.bare", true).map_err(lib_fault)?;
+    config
+        .set_bool("core.logAllRefUpdates", false)
+        .map_err(lib_fault)
+}
+
+/// Gives the bare clone whose git folder is `git_dir` the configuration of a
+/// Vault without a work tree.
+pub(crate) fn mark_no_files_at(git_dir: &Path) -> Result<(), Fault> {
+    init_library()?;
+    let repo = Repository::open_bare(git_dir).map_err(|err| open_fault(git_dir, false, err))?;
+    set_no_files(&repo)
+}
+
+/// Puts the fresh clone at `dir` on the branch `name`, from its own
+/// references: a bare clone (`bare`) holds the mirror's branches as
+/// `refs/heads/*`, one with files as `refs/remotes/origin/*`.
+///
+/// - The mirror has the branch: it is checked out (files) or `HEAD` names
+///   it (bare), whatever the mirror's `HEAD` named. The local branch the
+///   clone made for the mirror's `HEAD` is removed.
+/// - The mirror has no branch at all: `HEAD` names `name`, unborn.
+/// - The mirror holds branches but not `name`: `INVALID_ARGUMENT`.
+pub(crate) fn select_clone_branch(dir: &Path, bare: bool, name: &str) -> Result<(), Fault> {
+    init_library()?;
+    let repo = if bare {
+        Repository::open_bare(dir)
+    } else {
+        Repository::open(dir)
+    }
+    .map_err(|err| open_fault(dir, false, err))?;
+    let local = format!("refs/heads/{name}");
+    let remote = format!("refs/remotes/origin/{name}");
+    let heads_glob = if bare {
+        "refs/heads/*"
+    } else {
+        "refs/remotes/origin/*"
+    };
+    let holds_any = repo
+        .references_glob(heads_glob)
+        .map_err(lib_fault)?
+        .any(|reference| {
+            reference.is_ok_and(|reference| {
+                reference
+                    .name()
+                    .is_ok_and(|name| name != "refs/remotes/origin/HEAD")
+            })
+        });
+    if !holds_any {
+        return repo.set_head(&local).map_err(lib_fault);
+    }
+    let has = |reference: &str| match repo.find_reference(reference) {
+        Ok(_) => Ok(true),
+        Err(err) if err.code() == ErrorCode::NotFound => Ok(false),
+        Err(err) => Err(lib_fault(err)),
+    };
+    if bare {
+        if !has(&local)? {
+            return Err(missing_branch(name));
+        }
+        return repo.set_head(&local).map_err(lib_fault);
+    }
+    if !has(&remote)? {
+        return Err(missing_branch(name));
+    }
+    let head_name = repo
+        .find_reference("HEAD")
+        .ok()
+        .and_then(|head| head.symbolic_target().ok().flatten().map(ToOwned::to_owned));
+    if head_name.as_deref() == Some(local.as_str()) {
+        return Ok(());
+    }
+    let commit = repo
+        .find_reference(&remote)
+        .and_then(|reference| reference.peel_to_commit())
+        .map_err(lib_fault)?;
+    let mut branch = repo.branch(name, &commit, true).map_err(lib_fault)?;
+    branch
+        .set_upstream(Some(&format!("origin/{name}")))
+        .map_err(lib_fault)?;
+    let mut checkout = git2::build::CheckoutBuilder::new();
+    checkout.force();
+    repo.checkout_tree(commit.as_object(), Some(&mut checkout))
+        .map_err(lib_fault)?;
+    repo.set_head(&local).map_err(lib_fault)?;
+    if let Some(old) = head_name.filter(|old| old.starts_with("refs/heads/")) {
+        let mut old = repo.find_reference(&old).map_err(lib_fault)?;
+        old.delete().map_err(lib_fault)?;
+    }
+    Ok(())
+}
+
+/// The refusal of a mirror that holds commits but not the branch asked for.
+fn missing_branch(name: &str) -> Fault {
+    Fault::new(
+        VaultErrorCode::InvalidArgument,
+        format!("the mirror holds commits but not the initial branch {name:?}"),
+    )
 }
 
 /// Sets `core.longpaths` in the configuration of `repo`.
@@ -1279,7 +1432,7 @@ mod tests {
     #[test]
     fn a_new_repository_starts_on_main_with_long_paths_and_sha1_objects() {
         let scratch = Scratch::new("init");
-        init_repository(&scratch.0.join("made")).unwrap();
+        init_repository(&scratch.0.join("made"), false).unwrap();
         let made = scratch.0.join("made");
         assert!(is_work_tree(&made).unwrap());
         let head = std::fs::read_to_string(made.join(".git/HEAD")).unwrap();

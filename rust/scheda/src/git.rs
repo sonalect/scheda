@@ -541,6 +541,20 @@ pub(crate) async fn clone(url: &str, path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// `git clone --bare -- url git_dir`: copies the mirror at `url` into the
+/// git folder `git_dir` with no work tree, no checkout, and no git index.
+pub(crate) async fn clone_bare(url: &str, git_dir: &Path) -> Result<(), Error> {
+    git()
+        .arg("clone")
+        .arg("--bare")
+        .arg("--")
+        .arg(url)
+        .arg(git_dir)
+        .succeed()
+        .await?;
+    Ok(())
+}
+
 /// The namespace of Scheda's own references for the mirror's branches: a
 /// fetch writes `refs/scheda/mirror/<branch>` for each branch the mirror
 /// holds, so it touches neither the Vault's branches nor `FETCH_HEAD`.

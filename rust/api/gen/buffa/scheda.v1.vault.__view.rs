@@ -250,6 +250,11 @@ pub struct VaultInfoView<'a> {
     ///
     /// Field 4: `version`
     pub version: ::core::option::Option<&'a str>,
+    /// Whether the Vault has a folder of files: `WORK_TREE_FILES` or
+    /// `WORK_TREE_NONE`, never `WORK_TREE_UNSPECIFIED`.
+    ///
+    /// Field 5: `work_tree`
+    pub work_tree: ::core::option::Option<::buffa::EnumValue<super::super::WorkTree>>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for VaultInfoView<'a> {
@@ -310,6 +315,15 @@ impl<'a> ::buffa::MessageView<'a> for VaultInfoView<'a> {
                 )?;
                 view.version = Some(::buffa::types::borrow_str(&mut cur)?);
             }
+            5u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.work_tree = Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(&mut cur)?),
+                );
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -336,6 +350,7 @@ impl<'a> ::buffa::MessageView<'a> for VaultInfoView<'a> {
             index_path: self.index_path.map(|s| s.to_string()),
             writer: self.writer.map(|s| s.to_string()),
             version: self.version.map(|s| s.to_string()),
+            work_tree: self.work_tree,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -359,6 +374,9 @@ impl<'a> ::buffa::ViewEncode<'a> for VaultInfoView<'a> {
         if let Some(ref v) = self.version {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.work_tree {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -381,6 +399,9 @@ impl<'a> ::buffa::ViewEncode<'a> for VaultInfoView<'a> {
         }
         if let Some(ref v) = self.version {
             ::buffa::types::put_string_field(4u32, v, buf);
+        }
+        if let Some(ref v) = self.work_tree {
+            ::buffa::types::put_int32_field(5u32, v.to_i32(), buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -414,6 +435,9 @@ impl<'__a> ::serde::Serialize for VaultInfoView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.version {
             __map.serialize_entry("version", __v)?;
+        }
+        if let ::core::option::Option::Some(ref __v) = self.work_tree {
+            __map.serialize_entry("workTree", __v)?;
         }
         __map.end()
     }
@@ -537,6 +561,16 @@ impl VaultInfoOwnedView {
     #[must_use]
     pub fn version(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().version
+    }
+    /// Whether the Vault has a folder of files: `WORK_TREE_FILES` or
+    /// `WORK_TREE_NONE`, never `WORK_TREE_UNSPECIFIED`.
+    ///
+    /// Field 5: `work_tree`
+    #[must_use]
+    pub fn work_tree(
+        &self,
+    ) -> ::core::option::Option<::buffa::EnumValue<super::super::WorkTree>> {
+        self.0.reborrow().work_tree
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<VaultInfoView<'static>>>

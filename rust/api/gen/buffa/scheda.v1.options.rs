@@ -178,6 +178,155 @@ impl ::buffa::Enumeration for OpenMode {
         ]
     }
 }
+/// Whether a Vault has a folder of files beside its stored state.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(i32)]
+pub enum WorkTree {
+    /// As `WORK_TREE_FILES`.
+    WORK_TREE_UNSPECIFIED = 0i32,
+    /// The Vault has a folder of files: every Document is a file in it, and
+    /// any tool can read them.
+    WORK_TREE_FILES = 1i32,
+    /// The Vault has no folder of files: its Documents live in the stored
+    /// state only.
+    WORK_TREE_NONE = 2i32,
+}
+impl WorkTree {
+    ///Idiomatic alias for [`Self::WORK_TREE_UNSPECIFIED`]; `Debug` prints the variant name.
+    #[allow(non_upper_case_globals)]
+    pub const Unspecified: Self = Self::WORK_TREE_UNSPECIFIED;
+    ///Idiomatic alias for [`Self::WORK_TREE_FILES`]; `Debug` prints the variant name.
+    #[allow(non_upper_case_globals)]
+    pub const Files: Self = Self::WORK_TREE_FILES;
+    ///Idiomatic alias for [`Self::WORK_TREE_NONE`]; `Debug` prints the variant name.
+    #[allow(non_upper_case_globals)]
+    pub const None: Self = Self::WORK_TREE_NONE;
+}
+impl ::core::default::Default for WorkTree {
+    fn default() -> Self {
+        Self::WORK_TREE_UNSPECIFIED
+    }
+}
+impl ::serde::Serialize for WorkTree {
+    fn serialize<S: ::serde::Serializer>(
+        &self,
+        s: S,
+    ) -> ::core::result::Result<S::Ok, S::Error> {
+        s.serialize_str(::buffa::Enumeration::proto_name(self))
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for WorkTree {
+    fn deserialize<D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        struct _V;
+        impl ::serde::de::Visitor<'_> for _V {
+            type Value = WorkTree;
+            fn expecting(
+                &self,
+                f: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
+                f.write_str(
+                    concat!("a string, integer, or null for ", stringify!(WorkTree)),
+                )
+            }
+            fn visit_str<E: ::serde::de::Error>(
+                self,
+                v: &str,
+            ) -> ::core::result::Result<WorkTree, E> {
+                <WorkTree as ::buffa::Enumeration>::from_proto_name(v)
+                    .ok_or_else(|| { ::serde::de::Error::unknown_variant(v, &[]) })
+            }
+            fn visit_i64<E: ::serde::de::Error>(
+                self,
+                v: i64,
+            ) -> ::core::result::Result<WorkTree, E> {
+                let v32 = i32::try_from(v)
+                    .map_err(|_| {
+                        ::serde::de::Error::custom(
+                            ::buffa::alloc::format!("enum value {v} out of i32 range"),
+                        )
+                    })?;
+                <WorkTree as ::buffa::Enumeration>::from_i32(v32)
+                    .ok_or_else(|| {
+                        ::serde::de::Error::custom(
+                            ::buffa::alloc::format!("unknown enum value {v32}"),
+                        )
+                    })
+            }
+            fn visit_u64<E: ::serde::de::Error>(
+                self,
+                v: u64,
+            ) -> ::core::result::Result<WorkTree, E> {
+                let v32 = i32::try_from(v)
+                    .map_err(|_| {
+                        ::serde::de::Error::custom(
+                            ::buffa::alloc::format!("enum value {v} out of i32 range"),
+                        )
+                    })?;
+                <WorkTree as ::buffa::Enumeration>::from_i32(v32)
+                    .ok_or_else(|| {
+                        ::serde::de::Error::custom(
+                            ::buffa::alloc::format!("unknown enum value {v32}"),
+                        )
+                    })
+            }
+            fn visit_unit<E: ::serde::de::Error>(
+                self,
+            ) -> ::core::result::Result<WorkTree, E> {
+                ::core::result::Result::Ok(::core::default::Default::default())
+            }
+        }
+        d.deserialize_any(_V)
+    }
+}
+impl ::buffa::json_helpers::ProtoElemJson for WorkTree {
+    fn serialize_proto_json<S: ::serde::Serializer>(
+        v: &Self,
+        s: S,
+    ) -> ::core::result::Result<S::Ok, S::Error> {
+        ::serde::Serialize::serialize(v, s)
+    }
+    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        <Self as ::serde::Deserialize>::deserialize(d)
+    }
+}
+impl ::buffa::Enumeration for WorkTree {
+    fn from_i32(value: i32) -> ::core::option::Option<Self> {
+        match value {
+            0i32 => ::core::option::Option::Some(Self::WORK_TREE_UNSPECIFIED),
+            1i32 => ::core::option::Option::Some(Self::WORK_TREE_FILES),
+            2i32 => ::core::option::Option::Some(Self::WORK_TREE_NONE),
+            _ => ::core::option::Option::None,
+        }
+    }
+    fn to_i32(&self) -> i32 {
+        *self as i32
+    }
+    fn proto_name(&self) -> &'static str {
+        match self {
+            Self::WORK_TREE_UNSPECIFIED => "WORK_TREE_UNSPECIFIED",
+            Self::WORK_TREE_FILES => "WORK_TREE_FILES",
+            Self::WORK_TREE_NONE => "WORK_TREE_NONE",
+        }
+    }
+    fn from_proto_name(name: &str) -> ::core::option::Option<Self> {
+        match name {
+            "WORK_TREE_UNSPECIFIED" => {
+                ::core::option::Option::Some(Self::WORK_TREE_UNSPECIFIED)
+            }
+            "WORK_TREE_FILES" => ::core::option::Option::Some(Self::WORK_TREE_FILES),
+            "WORK_TREE_NONE" => ::core::option::Option::Some(Self::WORK_TREE_NONE),
+            _ => ::core::option::Option::None,
+        }
+    }
+    fn values() -> &'static [Self] {
+        &[Self::WORK_TREE_UNSPECIFIED, Self::WORK_TREE_FILES, Self::WORK_TREE_NONE]
+    }
+}
 /// How to open a Vault.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
@@ -301,6 +450,30 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub filter_max_depth: ::core::option::Option<u32>,
+    /// Whether the Vault has a folder of files beside its stored state. It
+    /// applies when `open` makes a Vault, a new one or a clone. On an attach
+    /// to a Vault that exists, a set value must be the Vault's own, or the
+    /// open fails with `INVALID_ARGUMENT`. Unset: `WORK_TREE_FILES`.
+    ///
+    /// Field 12: `work_tree`
+    #[serde(
+        rename = "workTree",
+        alias = "work_tree",
+        with = "::buffa::json_helpers::opt_enum",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub work_tree: ::core::option::Option<::buffa::EnumValue<WorkTree>>,
+    /// The branch a Vault that `open` makes starts on, a new one or a clone's
+    /// first write. A name that is not a valid branch name is
+    /// `INVALID_ARGUMENT`. Unset: git's `init.defaultBranch`, or `main`.
+    ///
+    /// Field 13: `initial_branch`
+    #[serde(
+        rename = "initialBranch",
+        alias = "initial_branch",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub initial_branch: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -319,6 +492,8 @@ impl ::core::fmt::Debug for OpenOptions {
             .field("signing", &self.signing)
             .field("index_wait_timeout_ms", &self.index_wait_timeout_ms)
             .field("filter_max_depth", &self.filter_max_depth)
+            .field("work_tree", &self.work_tree)
+            .field("initial_branch", &self.initial_branch)
             .finish()
     }
 }
@@ -392,6 +567,26 @@ impl OpenOptions {
         self.filter_max_depth = Some(value);
         self
     }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::work_tree`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_work_tree(
+        mut self,
+        value: impl Into<::buffa::EnumValue<WorkTree>>,
+    ) -> Self {
+        self.work_tree = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::initial_branch`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_initial_branch(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.initial_branch = Some(value.into());
+        self
+    }
 }
 ::buffa::impl_default_instance!(OpenOptions);
 impl ::buffa::MessageName for OpenOptions {
@@ -461,6 +656,12 @@ impl ::buffa::Message for OpenOptions {
         if let Some(v) = self.filter_max_depth {
             size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.work_tree {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
+        if let Some(ref v) = self.initial_branch {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -518,6 +719,12 @@ impl ::buffa::Message for OpenOptions {
         }
         if let Some(v) = self.filter_max_depth {
             ::buffa::types::put_uint32_field(11u32, v, buf);
+        }
+        if let Some(ref v) = self.work_tree {
+            ::buffa::types::put_int32_field(12u32, v.to_i32(), buf);
+        }
+        if let Some(ref v) = self.initial_branch {
+            ::buffa::types::put_string_field(13u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -639,6 +846,27 @@ impl ::buffa::Message for OpenOptions {
                     ::buffa::types::decode_uint32(buf)?,
                 );
             }
+            12u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.work_tree = ::core::option::Option::Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(buf)?),
+                );
+            }
+            13u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self
+                        .initial_branch
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -658,6 +886,8 @@ impl ::buffa::Message for OpenOptions {
         self.signing = ::buffa::MessageField::none();
         self.index_wait_timeout_ms = ::core::option::Option::None;
         self.filter_max_depth = ::core::option::Option::None;
+        self.work_tree = ::core::option::Option::None;
+        self.initial_branch = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

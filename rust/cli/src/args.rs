@@ -27,6 +27,16 @@ pub(crate) struct Cli {
     #[arg(long, global = true, value_enum, value_name = "MODE")]
     pub(crate) mode: Option<ModeArg>,
 
+    /// Whether a Vault that open makes has a folder of files. On an existing
+    /// Vault it must be the Vault's own. Unset: the library default (files).
+    #[arg(long, global = true, value_enum, value_name = "WORK_TREE")]
+    pub(crate) work_tree: Option<WorkTreeArg>,
+
+    /// The branch a Vault that open makes starts on. Unset: the library
+    /// default (`init.defaultBranch`, or `main`).
+    #[arg(long, global = true, value_name = "NAME")]
+    pub(crate) initial_branch: Option<String>,
+
     /// The mirror of the Vault (a git remote URL), set at open.
     #[arg(long, global = true, value_name = "URL")]
     pub(crate) mirror: Option<String>,
@@ -168,6 +178,16 @@ pub(crate) enum ModeArg {
     OpenExisting,
     /// Make a Vault; fail when the folder holds one.
     CreateNew,
+}
+
+/// `--work-tree`: whether a Vault that `Scheda.Open` makes has a folder of
+/// files.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum WorkTreeArg {
+    /// The Vault has a folder of files.
+    Files,
+    /// The Vault has no folder of files.
+    None,
 }
 
 /// A subcommand: one rpc, reached from the Vault.

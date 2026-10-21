@@ -213,6 +213,10 @@ pub(crate) struct Committer {
     /// Woken when a commit of this handle ends: the merge task of the Vault
     /// looks at the packs.
     pack: Arc<Merges>,
+    /// Whether the Vault has no work tree (`core.bare`), read once when the
+    /// handle was made. Such a Vault writes no file, no git index, and no
+    /// note of paths in the lock file.
+    no_files: bool,
 }
 
 impl Committer {
@@ -236,7 +240,14 @@ impl Committer {
             turn: Arc::new(Queue::new(())),
             signal: Arc::new(Signal::default()),
             pack,
+            no_files: crate::repo::has_no_files(root)?,
         })
+    }
+
+    /// Whether the Vault has no work tree: its writes touch no file and no
+    /// git index.
+    pub(crate) fn has_no_files(&self) -> bool {
+        self.no_files
     }
 
     /// What this handle's commits wake besides the indexer: the merge task.
@@ -293,8 +304,12 @@ impl Committer {
     ///
     /// `STORAGE` or `REPLICATION` when the recovery fails.
     pub(crate) fn adopt(&self, _cx: &Blocking, held: Held) -> Result<WriteLock<'_>, Error> {
-        recover(&self.root, &self.repos, held.flock.file())
-            .context("recover an unfinished write")?;
+        // A Vault without a work tree notes no path, so it has nothing to
+        // settle.
+        if !self.no_files {
+            recover(&self.root, &self.repos, held.flock.file())
+                .context("recover an unfinished write")?;
+        }
         Ok(WriteLock {
             committer: self,
             held,
@@ -434,6 +449,11 @@ impl WriteLock<'_> {
         &self.committer.root
     }
 
+    /// Whether the Vault has no work tree: a write leaves no file.
+    pub(crate) fn has_no_files(&self) -> bool {
+        self.committer.no_files
+    }
+
     /// The state of `repo` as `HEAD` names it now: what the checks of a
     /// write read, and what its commit is built on.
     pub(crate) fn snapshot(&self, repo: Repo) -> Result<Snap, Fault> {
@@ -477,6 +497,10 @@ impl WriteLock<'_> {
     /// is left as it is, and the index gets the new state, so git shows it as
     /// changed.
     ///
+    /// In a Vault without a work tree none of this is done: no file is
+    /// written, git's index is not read, no path is noted in the lock file,
+    /// and only the branch moves.
+    ///
     /// Returns the commit `HEAD` of the repository names afterwards.
     ///
     /// # Errors
@@ -490,6 +514,7 @@ impl WriteLock<'_> {
         changes: &[Change],
     ) -> Result<Option<Oid>, Error> {
         let vault = self.root();
+        let no_files = self.committer.no_files;
         let repo = snap.repo();
         let old = snap.commit();
         if changes.is_empty() {
@@ -505,7 +530,9 @@ impl WriteLock<'_> {
         for change in changes {
             check_relative(change.path())?;
             repo.inner(change.path())?;
-            reject_symlinks(vault, &vault.join(change.path())).context("check the path")?;
+            if !no_files {
+                reject_symlinks(vault, &vault.join(change.path())).context("check the path")?;
+            }
         }
         // The write lock is held and nothing is built yet: too many packs
         // are merged first, and a merge that fails fails the write here.
@@ -521,24 +548,33 @@ impl WriteLock<'_> {
         else {
             return Ok(old);
         };
-        let paths: Vec<&str> = changes.iter().map(Change::path).collect();
-        write_list(self.held.flock.file(), &paths)?;
+        if !no_files {
+            let paths: Vec<&str> = changes.iter().map(Change::path).collect();
+            write_list(self.held.flock.file(), &paths)?;
+        }
         #[cfg(test)]
         hooks::after_list(vault)?;
         #[cfg(test)]
         hooks::before_swap(vault, &repo.root(vault));
         if let Err(err) = swap(git, &branch, old, new, message) {
-            return Err(after_failed_swap(self.held.flock.file(), err));
+            return Err(if no_files {
+                err
+            } else {
+                after_failed_swap(self.held.flock.file(), err)
+            });
         }
         #[cfg(test)]
         hooks::after_swap(vault)?;
         self.committer.signal.moved();
-        let plan = plan_of(snap, changes, &blobs)?;
-        // The commit is stored. A git index that cannot be brought up now (a
-        // person's `git add` holds its lock) keeps the note, and the next
-        // holder of the lock does it.
-        if settle(vault, snap, &plan, Mode::Write)? {
-            empty_list(self.held.flock.file())?;
+        // A Vault without a work tree has no file to settle and no index.
+        if !no_files {
+            let plan = plan_of(snap, changes, &blobs)?;
+            // The commit is stored. A git index that cannot be brought up
+            // now (a person's `git add` holds its lock) keeps the note, and
+            // the next holder of the lock does it.
+            if settle(vault, snap, &plan, Mode::Write)? {
+                empty_list(self.held.flock.file())?;
+            }
         }
         self.committer.pack.wake();
         Ok(Some(new))
@@ -588,7 +624,15 @@ impl WriteLock<'_> {
             )
             .into());
         };
+        let no_files = self.committer.no_files;
         let branch = branch_of(git)?;
+        if no_files {
+            // No work tree and no index to bring along: only the branch moves.
+            swap(git, &branch, snap.commit(), new, message)?;
+            self.committer.signal.moved();
+            self.committer.pack.wake();
+            return Ok(());
+        }
         let target = git
             .find_commit(new)
             .and_then(|commit| commit.tree())
@@ -1516,6 +1560,122 @@ mod tests {
         assert_eq!(scratch.commits(), 3);
     }
 
+    /// The state a write cut at a seam leaves in a Vault without a work
+    /// tree: it opens, reads, checks clean, and holds no file, index, or log.
+    async fn whole_without_files(scratch: &Scratch, ids: &[&str]) {
+        let vault = open(
+            &scratch.0,
+            OpenOptions::default()
+                .with_work_tree(scheda_api::v1::WorkTree::WORK_TREE_NONE)
+                .with_write_timeout_ms(2000),
+        )
+        .await
+        .unwrap();
+        for id in ids {
+            let id = (*id).to_owned();
+            let got = step(&vault, move |cx, vault| {
+                vault.get(
+                    cx,
+                    "notes",
+                    scheda_api::v1::DocumentId {
+                        id: Some(id),
+                        ..Default::default()
+                    },
+                )
+            })
+            .await
+            .unwrap();
+            assert!(got.raw.is_some());
+        }
+        let report = step(&vault, |cx, vault| vault.check(cx)).await.unwrap();
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+        scratch.out(&["fsck", "--full", "--strict"]);
+        assert!(!scratch.0.join(".git/index").exists());
+        assert!(!scratch.0.join(".git/logs").exists());
+        assert!(!scratch.0.join("notes/a.md").exists());
+        assert!(!scratch.0.join("notes/b.md").exists());
+        assert!(!scratch.0.join("notes/c.md").exists());
+        // A following write succeeds.
+        crate::testing::upsert(&vault, "notes", crate::testing::upsert_of("z.md", b"z"))
+            .await
+            .unwrap();
+        scratch.out(&["fsck", "--full", "--strict"]);
+        settle_index(&vault).await;
+        vault.close().await.unwrap();
+    }
+
+    /// Lets the indexer's round for `HEAD` end before a handle closes. A
+    /// round that `Close` cuts leaves its Lance files with the umask's
+    /// modes, and `Check` reports them (a known issue); these tests are
+    /// about what a cut write leaves in git.
+    async fn settle_index(vault: &std::sync::Arc<crate::vault::Vault>) {
+        #[cfg(feature = "index")]
+        crate::testing::wait_indexed(vault).await;
+        #[cfg(not(feature = "index"))]
+        let _ = vault;
+    }
+
+    #[tokio::test]
+    async fn a_write_cut_in_a_vault_without_a_work_tree_leaves_it_whole() {
+        let scratch = Scratch::new("none-cut");
+        let vault = open(
+            &scratch.0,
+            OpenOptions::default()
+                .with_work_tree(scheda_api::v1::WorkTree::WORK_TREE_NONE)
+                .with_write_timeout_ms(2000),
+        )
+        .await
+        .unwrap();
+        create_collection(&vault, standard("notes")).await.unwrap();
+        crate::testing::upsert(&vault, "notes", crate::testing::upsert_of("a.md", b"a"))
+            .await
+            .unwrap();
+        let head = scratch.out(&["rev-parse", "HEAD"]);
+
+        // Cut after the pack of the write is stored, before the branch moves.
+        hooks::stop_after_list(&scratch.canonical());
+        let error =
+            crate::testing::upsert(&vault, "notes", crate::testing::upsert_of("b.md", b"b"))
+                .await
+                .unwrap_err();
+        assert!(error.is(VaultErrorCode::Storage));
+        settle_index(&vault).await;
+        vault.close().await.unwrap();
+        assert_eq!(scratch.out(&["rev-parse", "HEAD"]), head, "branch kept");
+        whole_without_files(&scratch, &["a.md"]).await;
+        let after_z = scratch.out(&["rev-parse", "HEAD"]);
+        assert_ne!(after_z, head);
+        assert!(
+            git()
+                .current_dir(&scratch.0)
+                .arg("show")
+                .arg("HEAD:notes/b.md")
+                .run()
+                .is_err(),
+            "the cut write's Document is absent"
+        );
+
+        // Cut after the branch moved: the Document is there.
+        let vault = open(
+            &scratch.0,
+            OpenOptions::default()
+                .with_work_tree(scheda_api::v1::WorkTree::WORK_TREE_NONE)
+                .with_write_timeout_ms(2000),
+        )
+        .await
+        .unwrap();
+        hooks::stop_after_swap(&scratch.canonical());
+        let error =
+            crate::testing::upsert(&vault, "notes", crate::testing::upsert_of("c.md", b"c"))
+                .await
+                .unwrap_err();
+        assert!(error.is(VaultErrorCode::Storage));
+        settle_index(&vault).await;
+        vault.close().await.unwrap();
+        assert_eq!(scratch.out(&["show", "HEAD:notes/c.md"]), "c");
+        whole_without_files(&scratch, &["a.md", "z.md", "c.md"]).await;
+    }
+
     #[tokio::test]
     async fn a_write_stopped_after_the_swap_is_completed_by_the_next_open() {
         let scratch = Scratch::new("swap-open");
@@ -1536,6 +1696,7 @@ mod tests {
         assert!(!scratch.0.join("notes").exists(), "the files lag");
         let root = scratch.canonical();
         assert!(step(&vault, move |cx, _| pending(cx, &root)).await.unwrap());
+        settle_index(&vault).await;
         vault.close().await.unwrap();
         let vault = scratch.open().await;
         assert!(scratch.0.join("notes/.collection.yaml").is_file());

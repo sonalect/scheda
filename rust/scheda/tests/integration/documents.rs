@@ -16,7 +16,7 @@ use scheda::v1::{
     CollectionAsync, CollectionDeclaration, CollectionKey, Document, DocumentCreation,
     DocumentDeletion, DocumentId, DocumentKey, DocumentOperation, DocumentUpdate, DocumentUpsert,
     DocumentWriteResult, DynCollectionAsync, DynVaultAsync, OpenOptions, VaultAsync,
-    VaultDocumentOperation, VaultErrorCode as Code,
+    VaultDocumentOperation, VaultErrorCode as Code, WorkTree,
 };
 use scheda::{Error, Fault};
 use serde_json::{Value, json};
@@ -2710,5 +2710,148 @@ fn an_empty_batch_waits_for_no_lock_and_answers_with_the_state_now() {
         assert!(error.is(Code::Aborted));
         held.unlock().unwrap();
         drop(held);
+    });
+}
+
+// ---------------------------------------------------------------------
+// A Vault without a work tree.
+
+/// A new Vault made with `WORK_TREE_NONE`, with `notes` and the isolated
+/// `diary`.
+async fn without_files(name: &str) -> (Scratch, PathBuf, DynVaultAsync) {
+    let scratch = Scratch::new(name);
+    let path = scratch.join("vault");
+    let vault = open(
+        &path,
+        OpenOptions::default().with_work_tree(WorkTree::WORK_TREE_NONE),
+    )
+    .await
+    .unwrap();
+    declare(&vault, json!({"name": "notes", "schema": {"standard": {}}})).await;
+    declare(
+        &vault,
+        json!({"name": "diary", "schema": {"standard": {}, "isolated": true}}),
+    )
+    .await;
+    (scratch, path, vault)
+}
+
+/// The names in `dir`, sorted.
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_vault_without_a_work_tree_is_marked_bare_with_no_reflog_in_both_repositories() {
+    both(|| async {
+        let (_scratch, path, vault) = without_files("none-config").await;
+        vault.upsert(upsert("diary", "d.md", b"d")).await.unwrap();
+        for dir in [path.clone(), path.join(".isolated")] {
+            assert_eq!(git_out(&dir, &["config", "--local", "core.bare"]), "true");
+            assert_eq!(
+                git_out(
+                    &dir,
+                    &["config", "--local", "--bool", "core.logAllRefUpdates"]
+                ),
+                "false"
+            );
+        }
+    });
+}
+
+#[test]
+fn a_vault_without_a_work_tree_writes_no_file_no_index_and_no_reflog() {
+    both(|| async {
+        let (_scratch, path, vault) = without_files("none-writes").await;
+        vault.upsert(upsert("notes", "a.md", b"one")).await.unwrap();
+        vault.upsert(upsert("diary", "d.md", b"hid")).await.unwrap();
+        let items: Vec<VaultDocumentOperation> = (0..50)
+            .map(|n| create_op("notes", &format!("b{n:02}.md"), b"x", "fifty"))
+            .collect();
+        batch(&vault, ok(items)).await.unwrap();
+        vault.delete(deletion("notes", "a.md")).await.unwrap();
+        vault.delete(deletion("diary", "d.md")).await.unwrap();
+        // The folder holds git's and Scheda's own folders and nothing else.
+        assert_eq!(names_in(&path), [".git", ".isolated", ".scheda"]);
+        assert_eq!(names_in(&path.join(".isolated")), [".git"]);
+        for git_dir in [path.join(".git"), path.join(".isolated/.git")] {
+            assert!(!git_dir.join("index").exists(), "{git_dir:?}");
+            assert!(!git_dir.join("logs").exists(), "{git_dir:?}");
+        }
+        assert!(
+            std::fs::read(path.join(".scheda/commit.lock"))
+                .unwrap()
+                .is_empty()
+        );
+        // Reads work, and `Info` says which mode the Vault is in.
+        let got = vault.get(key("notes", "b07.md")).await.unwrap();
+        assert_eq!(got.raw.as_deref(), Some(&b"x"[..]));
+        assert!(
+            vault
+                .get(key("notes", "a.md"))
+                .await
+                .unwrap_err()
+                .is(Code::NotFound)
+        );
+        let info = vault.info(Empty::default()).await.unwrap();
+        assert_eq!(
+            info.work_tree.and_then(|tree| tree.as_known()),
+            Some(WorkTree::WORK_TREE_NONE)
+        );
+        // A person reads it with git.
+        assert_eq!(commits(&path), 6);
+        let head = git_out(&path, &["log", "-1", "--format=%s"]);
+        assert!(!head.is_empty());
+        assert_eq!(git_out(&path, &["show", "HEAD:notes/b07.md"]), "x");
+        assert_eq!(git_out(&path, &["show", "HEAD:.scheda.yaml"]), "version: 3");
+        assert_eq!(
+            git_out(
+                &path.join(".isolated"),
+                &["ls-tree", "-r", "--name-only", "HEAD"]
+            ),
+            ".gitignore"
+        );
+    });
+}
+
+#[test]
+fn a_vault_without_a_work_tree_is_clean_under_check() {
+    both(|| async {
+        let (_scratch, _path, vault) = without_files("none-check").await;
+        vault.upsert(upsert("notes", "a.md", b"one")).await.unwrap();
+        vault.upsert(upsert("diary", "d.md", b"hid")).await.unwrap();
+        let report = vault.check(Empty::default()).await.unwrap();
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+    });
+}
+
+#[test]
+fn an_attach_asks_for_the_mode_the_vault_has() {
+    both(|| async {
+        let (_scratch, path, vault) = without_files("none-attach").await;
+        drop(vault);
+        let wrong = open(
+            &path,
+            OpenOptions::default().with_work_tree(WorkTree::WORK_TREE_FILES),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(wrong.is(Code::InvalidArgument));
+        for tree in [WorkTree::WORK_TREE_NONE, WorkTree::WORK_TREE_UNSPECIFIED] {
+            let again = open(&path, OpenOptions::default().with_work_tree(tree))
+                .await
+                .unwrap();
+            let info = again.info(Empty::default()).await.unwrap();
+            assert_eq!(
+                info.work_tree.and_then(|tree| tree.as_known()),
+                Some(WorkTree::WORK_TREE_NONE)
+            );
+        }
     });
 }

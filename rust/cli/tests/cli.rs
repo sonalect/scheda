@@ -1306,6 +1306,22 @@ fn opening_with_mode(path: &Path, mode: OpenMode) -> scheda::v1::VaultOpening {
 }
 
 #[test]
+fn work_tree_and_initial_branch_flags_reach_the_open_options() {
+    let scratch = Scratch::new("work-tree-flags");
+    let path = new_vault(&scratch);
+    let none = run_on(&path, &["--work-tree", "none", "info"]);
+    assert_eq!(none.code(), "VAULT_ERROR_CODE_INVALID_ARGUMENT");
+    let files = run_on(&path, &["--work-tree", "files", "info"]).json();
+    assert_eq!(files["workTree"], "WORK_TREE_FILES");
+    let unknown = run_on(&path, &["--work-tree", "sideways", "info"]);
+    assert_ne!(unknown.status, 0);
+    let bad = scratch.path("bad-branch");
+    let refused = run_on(&bad, &["--initial-branch", "bad..name", "info"]);
+    assert_eq!(refused.code(), "VAULT_ERROR_CODE_INVALID_ARGUMENT");
+    assert!(!bad.exists());
+}
+
+#[test]
 fn the_mirror_is_set_pushed_and_removed() {
     let scratch = Scratch::new("mirror");
     let path = new_vault(&scratch);

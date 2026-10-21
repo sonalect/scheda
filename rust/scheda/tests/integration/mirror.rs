@@ -10,7 +10,7 @@ use buffa_types::google::protobuf::Empty;
 use scheda::v1::{
     CollectionAsync, CollectionDeclaration, CollectionKey, DocumentDeletion, DocumentId,
     DocumentUpsert, DynCollectionAsync, DynMirrorAsync, DynVaultAsync, MirrorAsync, MirrorSetting,
-    OpenMode, OpenOptions, VaultAsync, VaultErrorCode as Code,
+    OpenMode, OpenOptions, VaultAsync, VaultErrorCode as Code, WorkTree,
 };
 
 use crate::common::{
@@ -106,13 +106,20 @@ fn bare(scratch: &Scratch, name: &str) -> PathBuf {
 /// A bare mirror that holds a Vault with the collection `notes` and the
 /// Documents `docs` (id, text), made through the handle itself.
 async fn seeded(scratch: &Scratch, name: &str, docs: &[(&str, &str)]) -> PathBuf {
+    seeded_as(scratch, name, docs, OpenOptions::default()).await
+}
+
+/// [`seeded`] with the Vault that makes the mirror opened with `options`.
+async fn seeded_as(
+    scratch: &Scratch,
+    name: &str,
+    docs: &[(&str, &str)],
+    options: OpenOptions,
+) -> PathBuf {
     let mirror = bare(scratch, &format!("{name}.git"));
-    let seed = open(
-        &scratch.join(&format!("{name}-seed")),
-        OpenOptions::default(),
-    )
-    .await
-    .unwrap();
+    let seed = open(&scratch.join(&format!("{name}-seed")), options)
+        .await
+        .unwrap();
     seed.create_collection(standard("notes")).await.unwrap();
     for (id, text) in docs {
         put(&seed, id, text).await;
@@ -1304,5 +1311,332 @@ fn auto_sync_at_open_keeps_a_refused_pull_as_the_sync_failure() {
                 .is_some_and(|code| code.contains("GENERATION")),
             "{failure:?}"
         );
+    });
+}
+
+// ---------------------------------------------------------------------
+// Clones, Pull, and Sync of a Vault without a work tree.
+
+fn none() -> OpenOptions {
+    OpenOptions::default().with_work_tree(WorkTree::WORK_TREE_NONE)
+}
+
+/// A clone of `mirror` made with `WORK_TREE_NONE`.
+async fn bare_clone_of(scratch: &Scratch, name: &str, mirror: &Path) -> (PathBuf, DynVaultAsync) {
+    let path = scratch.join(name);
+    let vault = open(&path, none().with_mirror(file_url(mirror)))
+        .await
+        .unwrap();
+    (path, vault)
+}
+
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The Vault at `path` has no Document file, no git index, no checkout, and
+/// no reflog, and its repository is marked bare.
+fn assert_no_files(path: &Path) {
+    assert_eq!(names_in(path), [".git", ".scheda"], "{path:?}");
+    let git_dir = path.join(".git");
+    assert!(!git_dir.join("index").exists(), "{path:?}: git index");
+    assert!(!git_dir.join("logs").exists(), "{path:?}: reflog");
+    assert_eq!(git_out(path, &["config", "--local", "core.bare"]), "true");
+    assert_eq!(
+        git_out(
+            path,
+            &["config", "--local", "--bool", "core.logAllRefUpdates"]
+        ),
+        "false"
+    );
+}
+
+#[test]
+fn a_clone_with_no_work_tree_is_bare_holds_no_file_and_reads_the_mirrors_documents() {
+    both(|| async {
+        let scratch = Scratch::new("none-clone");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one"), ("b.md", "two")]).await;
+        let (path, vault) = bare_clone_of(&scratch, "c", &mirror).await;
+        assert_no_files(&path);
+        assert_eq!(head(&path), mirror_head(&mirror));
+        assert_eq!(read(&vault, "a.md").await, "one");
+        assert_eq!(read(&vault, "b.md").await, "two");
+        assert_eq!(
+            git_out(&path, &["config", "remote.origin.url"]),
+            file_url(&mirror)
+        );
+        let info = vault.info(Default::default()).await.unwrap();
+        assert_eq!(
+            info.work_tree.and_then(|tree| tree.as_known()),
+            Some(WorkTree::WORK_TREE_NONE)
+        );
+        // A write of the clone stays file-less too.
+        put(&vault, "c.md", "three").await;
+        assert_no_files(&path);
+        drop(vault);
+        open(&path, OpenOptions::default()).await.unwrap();
+        assert_no_files(&path);
+    });
+}
+
+#[test]
+fn a_pull_fast_forwards_a_vault_without_a_work_tree_and_touches_no_index_no_file_no_reflog() {
+    both(|| async {
+        let scratch = Scratch::new("none-ff");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path_a, a) = bare_clone_of(&scratch, "a", &mirror).await;
+        let (path_b, b) = bare_clone_of(&scratch, "b", &mirror).await;
+        put(&a, "from-a.md", "a").await;
+        mirror_of(&a).await.sync(Empty::default()).await.unwrap();
+        pull(&b).await.unwrap();
+        assert_eq!(head(&path_b), head(&path_a));
+        assert_eq!(head(&path_b), mirror_head(&mirror));
+        assert_eq!(read(&b, "from-a.md").await, "a");
+        assert_no_files(&path_a);
+        assert_no_files(&path_b);
+    });
+}
+
+#[test]
+fn both_vaults_without_a_work_tree_writing_different_documents_end_equal_through_a_join() {
+    both(|| async {
+        let scratch = Scratch::new("none-join");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path_a, a) = bare_clone_of(&scratch, "a", &mirror).await;
+        let (path_b, b) = bare_clone_of(&scratch, "b", &mirror).await;
+        put(&a, "from-a.md", "a").await;
+        put(&b, "from-b.md", "b").await;
+        mirror_of(&a).await.sync(Empty::default()).await.unwrap();
+        mirror_of(&b).await.sync(Empty::default()).await.unwrap();
+        mirror_of(&a).await.sync(Empty::default()).await.unwrap();
+        assert_eq!(head(&path_a), mirror_head(&mirror));
+        assert_eq!(head(&path_b), mirror_head(&mirror));
+        // The second sync joined: two parents.
+        let parents = git_out(&path_b, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+        assert_eq!(parents.split_whitespace().count(), 3, "{parents}");
+        assert_eq!(
+            git_out(&path_b, &["log", "-1", "--format=%s"]),
+            "join the mirror's writes"
+        );
+        for vault in [&a, &b] {
+            assert_eq!(read(vault, "from-a.md").await, "a");
+            assert_eq!(read(vault, "from-b.md").await, "b");
+            assert_eq!(read(vault, "a.md").await, "one");
+        }
+        assert_no_files(&path_a);
+        assert_no_files(&path_b);
+        git(&mirror, &["fsck", "--no-progress", "--strict"]);
+    });
+}
+
+#[test]
+fn both_vaults_without_a_work_tree_writing_one_document_differently_conflict_and_change_nothing() {
+    both(|| async {
+        let scratch = Scratch::new("none-conflict");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path_a, a) = bare_clone_of(&scratch, "a", &mirror).await;
+        let (path_b, b) = bare_clone_of(&scratch, "b", &mirror).await;
+        put(&a, "a.md", "from a").await;
+        put(&b, "a.md", "from b").await;
+        mirror_of(&a).await.sync(Empty::default()).await.unwrap();
+        let before = head(&path_b);
+        let error = mirror_of(&b)
+            .await
+            .sync(Empty::default())
+            .await
+            .unwrap_err();
+        assert!(error.is(Code::MirrorConflict), "{error}");
+        assert!(error.to_string().contains("notes/a.md"), "{error}");
+        assert_eq!(head(&path_b), before);
+        assert_eq!(read(&b, "a.md").await, "from b");
+        assert_eq!(mirror_head(&mirror), head(&path_a));
+        assert!(!path_b.join(".git/MERGE_HEAD").exists());
+        assert_no_files(&path_b);
+    });
+}
+
+#[test]
+fn a_clone_with_files_of_a_mirror_made_without_a_work_tree_works_and_the_reverse_too() {
+    both(|| async {
+        let scratch = Scratch::new("modes-cross");
+        // Mirror made by a Vault without files; clone with files.
+        let from_none = seeded_as(&scratch, "n", &[("a.md", "one")], none()).await;
+        let (path, with) = clone_of(&scratch, "with", &from_none).await;
+        assert_eq!(read(&with, "a.md").await, "one");
+        assert_eq!(
+            std::fs::read_to_string(path.join("notes/a.md")).unwrap(),
+            "one"
+        );
+        assert_clean(&path);
+        assert_eq!(git_out(&path, &["config", "--local", "core.bare"]), "false");
+        put(&with, "w.md", "w").await;
+        mirror_of(&with).await.sync(Empty::default()).await.unwrap();
+        assert_clean(&path);
+        // Mirror made by a Vault with files; clone without.
+        let from_files = seeded(&scratch, "f", &[("a.md", "two")]).await;
+        let (none_path, without) = bare_clone_of(&scratch, "without", &from_files).await;
+        assert_eq!(read(&without, "a.md").await, "two");
+        assert_no_files(&none_path);
+        put(&without, "x.md", "x").await;
+        mirror_of(&without)
+            .await
+            .sync(Empty::default())
+            .await
+            .unwrap();
+        assert_eq!(mirror_head(&from_files), head(&none_path));
+        assert_no_files(&none_path);
+    });
+}
+
+// ---------------------------------------------------------------------
+// `OpenOptions.initial_branch`.
+
+/// Both modes of a Vault: with files and without.
+const MODES: [WorkTree; 2] = [WorkTree::WORK_TREE_FILES, WorkTree::WORK_TREE_NONE];
+
+/// The branch `HEAD` of the repository at `dir` names.
+fn head_branch(dir: &Path) -> String {
+    git_out(dir, &["symbolic-ref", "HEAD"])
+}
+
+#[test]
+fn a_new_vault_starts_on_the_initial_branch_in_both_modes_and_unset_keeps_main() {
+    both(|| async {
+        for mode in MODES {
+            let scratch = Scratch::new("initial-new");
+            let set = scratch.join("set");
+            open(
+                &set,
+                OpenOptions::default()
+                    .with_work_tree(mode)
+                    .with_initial_branch("trunk"),
+            )
+            .await
+            .unwrap();
+            assert_eq!(head_branch(&set), "refs/heads/trunk", "{mode:?}");
+            assert_eq!(
+                git_out(&set, &["rev-list", "--count", "refs/heads/trunk"]),
+                "1",
+                "{mode:?}: the marker is on the branch"
+            );
+            let unset = scratch.join("unset");
+            open(&unset, OpenOptions::default().with_work_tree(mode))
+                .await
+                .unwrap();
+            assert_eq!(head_branch(&unset), "refs/heads/main", "{mode:?}");
+        }
+    });
+}
+
+#[test]
+fn a_clone_of_an_empty_mirror_starts_on_the_initial_branch_and_its_sync_pushes_it() {
+    both(|| async {
+        for mode in MODES {
+            let scratch = Scratch::new("initial-empty");
+            let mirror = bare(&scratch, "m.git");
+            let path = scratch.join("v");
+            let vault = open(
+                &path,
+                OpenOptions::default()
+                    .with_mirror(file_url(&mirror))
+                    .with_work_tree(mode)
+                    .with_initial_branch("trunk"),
+            )
+            .await
+            .unwrap();
+            assert_eq!(head_branch(&path), "refs/heads/trunk", "{mode:?}");
+            vault.create_collection(standard("notes")).await.unwrap();
+            put(&vault, "a.md", "one").await;
+            mirror_of(&vault)
+                .await
+                .sync(Empty::default())
+                .await
+                .unwrap();
+            assert_eq!(
+                git_out(&mirror, &["rev-parse", "refs/heads/trunk"]),
+                head(&path),
+                "{mode:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn a_mirror_that_has_the_branch_is_cloned_on_it_whatever_its_head_names() {
+    both(|| async {
+        for mode in MODES {
+            let scratch = Scratch::new("initial-has");
+            let mirror = seeded(&scratch, "m", &[("a.md", "main's")]).await;
+            // `master` is one commit behind `main`, and the mirror's HEAD names it.
+            git(&mirror, &["branch", "master", "main~1"]);
+            git(&mirror, &["symbolic-ref", "HEAD", "refs/heads/master"]);
+            let path = scratch.join("v");
+            let vault = open(
+                &path,
+                OpenOptions::default()
+                    .with_mirror(file_url(&mirror))
+                    .with_work_tree(mode)
+                    .with_initial_branch("main"),
+            )
+            .await
+            .unwrap();
+            assert_eq!(head_branch(&path), "refs/heads/main", "{mode:?}");
+            assert_eq!(read(&vault, "a.md").await, "main's", "{mode:?}");
+            if mode == WorkTree::WORK_TREE_FILES {
+                assert_clean(&path);
+            }
+        }
+    });
+}
+
+#[test]
+fn a_mirror_with_commits_but_not_the_branch_is_invalid_argument_and_leaves_nothing() {
+    both(|| async {
+        for mode in MODES {
+            let scratch = Scratch::new("initial-missing");
+            let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+            git(&mirror, &["branch", "-m", "main", "master"]);
+            let path = scratch.join("v");
+            let error = open(
+                &path,
+                OpenOptions::default()
+                    .with_mirror(file_url(&mirror))
+                    .with_work_tree(mode)
+                    .with_initial_branch("main"),
+            )
+            .await
+            .err()
+            .unwrap();
+            assert!(error.is(Code::InvalidArgument), "{mode:?}: {error}");
+            assert!(!path.exists(), "{mode:?}");
+            let left: Vec<_> = std::fs::read_dir(scratch.join("."))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| name.contains("scheda-clone"))
+                .collect();
+            assert!(left.is_empty(), "{mode:?}: {left:?}");
+        }
+    });
+}
+
+#[test]
+fn an_attach_does_not_check_the_initial_branch() {
+    both(|| async {
+        for mode in MODES {
+            let scratch = Scratch::new("initial-attach");
+            let path = scratch.join("v");
+            open(&path, OpenOptions::default().with_work_tree(mode))
+                .await
+                .unwrap();
+            open(&path, OpenOptions::default().with_initial_branch("other"))
+                .await
+                .unwrap();
+            assert_eq!(head_branch(&path), "refs/heads/main", "{mode:?}");
+        }
     });
 }

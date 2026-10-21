@@ -13,6 +13,7 @@ import "scheda/v1/document.proto";
 import "scheda/v1/error.proto";
 import "scheda/v1/index.proto";
 import "scheda/v1/mirror.proto";
+import "scheda/v1/options.proto";
 import "scheda/v1/ports.proto";
 import "scheda/v1/query.proto";
 
@@ -169,6 +170,9 @@ message VaultInfo {
   // `not_before`, it makes a query see every write stored on this path
   // before this call, by any Vault, process, or `git` command.
   string version = 4;
+  // Whether the Vault has a folder of files: `WORK_TREE_FILES` or
+  // `WORK_TREE_NONE`, never `WORK_TREE_UNSPECIFIED`.
+  WorkTree work_tree = 5;
 }
 
 // The answer of a port call of the Vault: `SetProjector`,
