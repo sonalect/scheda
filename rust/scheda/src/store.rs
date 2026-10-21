@@ -3,13 +3,14 @@
 //!
 //! ```text
 //! .scheda/index/{generation}/commit                     what the generation holds, written last
-//! .scheda/index/{generation}/t{n}.lance                 the rows of one collection
-//! .scheda/index/{generation}/t{n}.files.lance           the files those rows came from
-//! .scheda/index/{generation}/t{n}.texts.{column}.lance  the vectors of a `text list` column
+//! .scheda/index/{generation}/t{n}d     the rows of one collection (Documents)
+//! .scheda/index/{generation}/t{n}f     the files those rows came from
+//! .scheda/index/{generation}/t{n}x{k}  the vectors of a `text list` column, numbered `k`
 //! ```
 //!
-//! Every dataset of a table is named `t{n}.…`, so the folders of a table
-//! are those whose name begins with `t{n}.`.
+//! Every dataset of a table is named `t{n}` and a letter, so the folders of
+//! a table are those whose name is `t{n}` followed by a letter. The names are
+//! short for the budget of the whole path.
 //!
 //! **Rows.** One row per Document, or per journal line: `id`, `file` (the
 //! Vault-relative path of the Document, or of the journal segment of a
@@ -289,10 +290,41 @@ fn vector_type(dimensions: u32) -> DataType {
     )
 }
 
-/// The name of the texts dataset of the `text list` vector column `column`
-/// of the table `table` (`t{n}`), without `.lance`.
-pub(crate) fn texts_name(table: &str, column: &str) -> String {
-    format!("{table}.texts.{column}")
+/// The folder name of the rows dataset of the table `table` (`t{n}`): `d`
+/// for the Documents.
+pub(crate) fn rows_name(table: &str) -> String {
+    format!("{table}d")
+}
+
+/// The folder name of the files dataset of the table `table`: `f`.
+pub(crate) fn files_name(table: &str) -> String {
+    format!("{table}f")
+}
+
+/// The folder name of the texts dataset numbered `number` of the table
+/// `table` (`t{n}`): `x{number}`.
+pub(crate) fn texts_name(table: &str, number: u32) -> String {
+    format!("{table}x{number}")
+}
+
+/// The number of each `text list` vector column of `shape`, in column
+/// order: what a new table gives them.
+#[cfg(test)]
+pub(crate) fn numbered(shape: &Shape) -> BTreeMap<String, u32> {
+    (0..)
+        .zip(shape.list_vectors())
+        .map(|(n, column)| (column.to_owned(), n))
+        .collect()
+}
+
+/// The number of the texts dataset of `column`; `INDEX_BROKEN` when the
+/// table has none for it.
+fn texts_number(numbers: &BTreeMap<String, u32>, column: &str) -> Result<u32, Error> {
+    numbers
+        .get(column)
+        .copied()
+        .ok_or_else(|| broken("a texts dataset of the Index has no number"))
+        .map_err(Error::from)
 }
 
 /// The name of the vector column of the `vector` column `name`.
@@ -727,10 +759,10 @@ pub(crate) fn vector_at(vectors: &FixedSizeListArray, n: usize) -> Result<Vec<f3
     Ok(values.values().to_vec())
 }
 
-/// The folder of the texts dataset of the `text list` vector column
-/// `column` of the table `table` of the generation at `dir`.
-pub(crate) fn texts_path(dir: &Path, table: &str, column: &str) -> std::path::PathBuf {
-    dir.join(format!("{}.lance", texts_name(table, column)))
+/// The folder of the texts dataset numbered `number` of the table `table`
+/// of the generation at `dir`.
+pub(crate) fn texts_path(dir: &Path, table: &str, number: u32) -> std::path::PathBuf {
+    dir.join(texts_name(table, number))
 }
 
 /// The vectors one collection's table of another generation holds, open
@@ -751,10 +783,11 @@ impl Vectors {
     pub(crate) async fn open(
         dir: &Path,
         name: &str,
+        numbers: &BTreeMap<String, u32>,
         shape: Shape,
         versions: &Versions,
     ) -> Result<Vectors, Error> {
-        let rows = open_at(&dir.join(format!("{name}.lance")), Some(versions.rows))
+        let rows = open_at(&dir.join(rows_name(name)), Some(versions.rows))
             .await
             .context("open the rows of a collection")?;
         let mut texts = BTreeMap::new();
@@ -762,7 +795,8 @@ impl Vectors {
             let Some(version) = versions.texts.get(column) else {
                 continue;
             };
-            let dataset = open_at(&texts_path(dir, name, column), Some(*version))
+            let number = texts_number(numbers, column)?;
+            let dataset = open_at(&texts_path(dir, name, number), Some(*version))
                 .await
                 .context("open the texts of a collection")?;
             texts.insert(column.to_owned(), Arc::new(dataset));
@@ -789,6 +823,92 @@ pub(crate) struct Table {
     texts: BTreeMap<String, Arc<Dataset>>,
     /// Whether this round wrote to it.
     written: bool,
+    /// The folders of its datasets and what they held when it was opened:
+    /// what a round adds is what the folders hold beyond it.
+    unsynced: Unsynced,
+}
+
+/// The files and folders under the folders of a table's datasets, at the
+/// moment a round opened it, and the folders themselves.
+pub(crate) struct Unsynced {
+    datasets: Vec<std::path::PathBuf>,
+    before: std::collections::BTreeSet<std::path::PathBuf>,
+}
+
+impl Unsynced {
+    /// What the folders in `datasets` hold now.
+    fn new(datasets: Vec<std::path::PathBuf>) -> Result<Unsynced, Error> {
+        let mut before = std::collections::BTreeSet::new();
+        for dataset in &datasets {
+            list_under(dataset, &mut before)?;
+        }
+        Ok(Unsynced { datasets, before })
+    }
+
+    /// Flushes to disk what Lance added under the folders since they were
+    /// listed: its data, deletion, transaction, manifest, and index files,
+    /// then the folders that received them, the new ones and the folders
+    /// that hold those. Lance flushes nothing itself, and the `commit` of
+    /// the generation, written after, names the versions these files make.
+    ///
+    /// # Errors
+    ///
+    /// `STORAGE` when a file or folder cannot be listed or flushed.
+    pub(crate) fn sync(self) -> Result<(), Error> {
+        let mut now = std::collections::BTreeSet::new();
+        for dataset in &self.datasets {
+            list_under(dataset, &mut now)?;
+        }
+        let mut folders = std::collections::BTreeSet::new();
+        for path in now.difference(&self.before) {
+            if path.is_dir() {
+                folders.insert(path.clone());
+            } else {
+                crate::fs::sync_file(path)?;
+            }
+            if let Some(parent) = path.parent() {
+                folders.insert(parent.to_path_buf());
+            }
+        }
+        // The deepest first: a folder is flushed after what it holds.
+        let mut folders: Vec<_> = folders.into_iter().collect();
+        folders.sort_by_key(|folder| std::cmp::Reverse(folder.components().count()));
+        for folder in folders {
+            crate::fs::sync_dir(&folder)?;
+        }
+        Ok(())
+    }
+}
+
+/// Adds every file and folder under `dir` to `out`; none when `dir` is not
+/// there.
+fn list_under(
+    dir: &Path,
+    out: &mut std::collections::BTreeSet<std::path::PathBuf>,
+) -> Result<(), Error> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(crate::error::io(err)).with_context(|| format!("list {}", dir.display()));
+        }
+    };
+    for entry in entries {
+        let entry = entry
+            .map_err(crate::error::io)
+            .with_context(|| format!("list {}", dir.display()))?;
+        let path = entry.path();
+        let is_dir = entry
+            .file_type()
+            .map_err(crate::error::io)
+            .with_context(|| format!("list {}", dir.display()))?
+            .is_dir();
+        out.insert(path.clone());
+        if is_dir {
+            list_under(&path, out)?;
+        }
+    }
+    Ok(())
 }
 
 impl Table {
@@ -802,18 +922,26 @@ impl Table {
     pub(crate) async fn open(
         dir: &Path,
         name: &str,
+        numbers: &BTreeMap<String, u32>,
         shape: Shape,
         committed: Option<&Versions>,
     ) -> Result<Table, Error> {
+        let mut datasets = vec![dir.join(rows_name(name)), dir.join(files_name(name))];
+        if shape.dimensions.is_some() {
+            for column in shape.list_vectors() {
+                datasets.push(texts_path(dir, name, texts_number(numbers, column)?));
+            }
+        }
+        let unsynced = Unsynced::new(datasets)?;
         let rows = for_round(
-            &dir.join(format!("{name}.lance")),
+            &dir.join(rows_name(name)),
             shape.rows_schema(),
             committed.map(|versions| versions.rows),
         )
         .await
         .context("open the rows of a collection")?;
         let files = for_round(
-            &dir.join(format!("{name}.files.lance")),
+            &dir.join(files_name(name)),
             files_schema(),
             committed.map(|versions| versions.files),
         )
@@ -825,8 +953,9 @@ impl Table {
             for column in shape.list_vectors() {
                 let version = committed.and_then(|versions| versions.texts.get(column).copied());
                 fresh |= version.is_none();
+                let number = texts_number(numbers, column)?;
                 let dataset = for_round(
-                    &texts_path(dir, name, column),
+                    &texts_path(dir, name, number),
                     Shape::texts_schema(dimensions),
                     version,
                 )
@@ -841,7 +970,18 @@ impl Table {
             files: Arc::new(files),
             texts,
             written: fresh,
+            unsynced,
         })
+    }
+
+    /// What this round added under the folders of the table, to flush with
+    /// [`Unsynced::sync`] once the round has made its last version. The
+    /// table lists nothing more.
+    pub(crate) fn take_unsynced(&mut self) -> Unsynced {
+        Unsynced {
+            datasets: std::mem::take(&mut self.unsynced.datasets),
+            before: std::mem::take(&mut self.unsynced.before),
+        }
     }
 
     /// Adds `rows`, none of which the table holds, as a new fragment: a
@@ -1370,6 +1510,88 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn the_paths_of_a_table_with_every_index_and_long_columns_stay_short() {
+        const DIMENSIONS: usize = 16;
+        let long = |name: &str| format!("{name}{}", "c".repeat(200 - name.len()));
+        let (kind, title, topic) = (long("kind"), long("title"), long("topic"));
+        let scratch = Scratch::new("short-paths");
+        let shape = Shape {
+            columns: vec![
+                column(&kind, true, false, false),
+                column(&title, false, true, false),
+                column(&topic, false, false, true),
+            ],
+            vectors: vec![topic.clone()],
+            dimensions: Some(DIMENSIONS as u32),
+        };
+        let generation = scratch.0.join("g0");
+        let mut table = Table::open(&generation, "t0", &numbered(&shape), shape, None)
+            .await
+            .unwrap();
+        let rows: Vec<Row> = (0..VECTOR_INDEX_ROWS)
+            .map(|n| {
+                let id = format!("r{n:05}");
+                Row {
+                    file: format!("notes/{id}"),
+                    order: id.clone(),
+                    id,
+                    values: BTreeMap::from([
+                        (kind.clone(), Value::Text(format!("k{}", n % 7))),
+                        (
+                            title.clone(),
+                            Value::Text(format!("word{} common", n % 100)),
+                        ),
+                    ]),
+                    embeddings: BTreeMap::from([(
+                        topic.clone(),
+                        vec![Embedding {
+                            position: 0,
+                            vector: vector_of(n, DIMENSIONS),
+                            digest: format!("d{n}"),
+                        }],
+                    )]),
+                }
+            })
+            .collect();
+        table.upsert(&rows).await.unwrap();
+        table.maintain(1, None).await.unwrap();
+        assert!(
+            Dataset::clone(&table.rows)
+                .load_indices()
+                .await
+                .unwrap()
+                .iter()
+                .any(|index| index.name.contains("ivf_pq")),
+            "the vector index was made"
+        );
+        let mut longest = (0, String::new());
+        let mut pending = vec![scratch.0.clone()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let rel = path
+                    .strip_prefix(&scratch.0)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                if rel.len() > longest.0 {
+                    longest = (rel.len(), rel);
+                }
+                if path.is_dir() {
+                    pending.push(path);
+                }
+            }
+        }
+        // Lance's own `_indices/{uuid}/…` below `g{n}/t{n}d/` is most of it.
+        assert!(
+            longest.0 <= 80,
+            "the longest path is {} characters: {}",
+            longest.0,
+            longest.1
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn the_indices_are_made_and_the_scans_use_them() {
         const DIMENSIONS: usize = 16;
         let scratch = Scratch::new("indices");
@@ -1382,7 +1604,9 @@ mod tests {
             vectors: vec![String::from("topic")],
             dimensions: Some(DIMENSIONS as u32),
         };
-        let mut table = Table::open(&scratch.0, "t0", shape, None).await.unwrap();
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&shape), shape, None)
+            .await
+            .unwrap();
         let rows: Vec<Row> = (0..VECTOR_INDEX_ROWS)
             .map(|n| {
                 let id = format!("r{n:05}");
@@ -1492,20 +1716,24 @@ mod tests {
         let gone = [String::from("r00000")];
 
         // The round that ran to its end, in a table of its own.
-        let mut whole = Table::open(&scratch.0, "t1", texts(), None).await.unwrap();
+        let mut whole = Table::open(&scratch.0, "t1", &numbered(&texts()), texts(), None)
+            .await
+            .unwrap();
         whole.upsert(&first).await.unwrap();
         whole.upsert(&second).await.unwrap();
         whole.delete_rows("id", &gone).await.unwrap();
         let wanted = titles_of(&whole.rows).await;
 
-        let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&texts()), texts(), None)
+            .await
+            .unwrap();
         table.upsert(&first).await.unwrap();
         let committed = table.versions();
         // A round that wrote past the commit, then was killed.
         table.upsert(&second).await.unwrap();
         drop(table);
         // A reader opens the version the commit names.
-        let path = scratch.0.join("t0.lance");
+        let path = scratch.0.join("t0d");
         let reader = Dataset::open(path.to_str().unwrap())
             .await
             .unwrap()
@@ -1517,9 +1745,15 @@ mod tests {
         assert!(read.values().all(|titles| titles == &["one"]));
 
         // The next round starts from the commit and ends as the whole one.
-        let mut again = Table::open(&scratch.0, "t0", texts(), Some(&committed))
-            .await
-            .unwrap();
+        let mut again = Table::open(
+            &scratch.0,
+            "t0",
+            &numbered(&texts()),
+            texts(),
+            Some(&committed),
+        )
+        .await
+        .unwrap();
         assert_eq!(titles_of(&again.rows).await, read);
         again.upsert(&second).await.unwrap();
         again.delete_rows("id", &gone).await.unwrap();
@@ -1531,7 +1765,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn two_hundred_upserts_of_the_same_rows_never_leave_a_row_twice() {
         let scratch = Scratch::new("upserts");
-        let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&texts()), texts(), None)
+            .await
+            .unwrap();
         for round in 0..200_u64 {
             let marker = format!("m{round}");
             let rows: Vec<Row> = (0..50).map(|n| titled(n, &marker)).collect();
@@ -1585,7 +1821,9 @@ mod tests {
     /// A table with one large fragment of 20 000 rows, made and kept as it
     /// is.
     async fn table_with_a_large_fragment(scratch: &Scratch) -> Table {
-        let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&texts()), texts(), None)
+            .await
+            .unwrap();
         let large: Vec<Row> = (0..20_000)
             .map(|n| titled(n, &format!("a title of some length, number {n}")))
             .collect();
@@ -1599,7 +1837,7 @@ mod tests {
     async fn rounds_of_one_document_compact_only_once_the_small_fragments_pile_up() {
         let scratch = Scratch::new("compaction");
         let mut table = table_with_a_large_fragment(&scratch).await;
-        let dir = scratch.0.join("t0.lance");
+        let dir = scratch.0.join("t0d");
         let before = data_files(&dir);
         let large_bytes: u64 = before.values().sum();
         for write in 0..SMALL_FRAGMENTS - 1 {
@@ -1663,13 +1901,15 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_prune_keeps_the_version_a_reader_may_open_and_every_later_one() {
         let scratch = Scratch::new("prune");
-        let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&texts()), texts(), None)
+            .await
+            .unwrap();
         let mut made = Vec::new();
         for n in 0..4 {
             table.upsert(&[titled(n, "a title")]).await.unwrap();
             made.push(table.versions().rows);
         }
-        let path = scratch.0.join("t0.lance");
+        let path = scratch.0.join("t0d");
         let rows = Dataset::open(path.to_str().unwrap()).await.unwrap();
         // No `commit` named the table yet: nothing goes.
         prune(&rows, None).await.unwrap();
@@ -1770,7 +2010,9 @@ mod memory {
     /// parts whatever its size and maintained once, as a round leaves it;
     /// the versions its `commit` would name.
     async fn table_of(dir: &Path, rows: usize) -> Versions {
-        let mut table = Table::open(dir, "t0", shape(), None).await.unwrap();
+        let mut table = Table::open(dir, "t0", &numbered(&shape()), shape(), None)
+            .await
+            .unwrap();
         let part = rows / 10;
         for start in (0..rows).step_by(part) {
             let chunk: Vec<Row> = (start..start + part).map(|n| row(n, 0)).collect();
@@ -1812,7 +2054,7 @@ mod memory {
     async fn one_document(dir: &Path, committed: &Versions, rows: usize) -> Memory {
         let changed = row(rows / 2, 1);
         let ((), memory) = measured(async {
-            let mut table = Table::open(dir, "t0", shape(), Some(committed))
+            let mut table = Table::open(dir, "t0", &numbered(&shape()), shape(), Some(committed))
                 .await
                 .unwrap();
             table
@@ -1870,9 +2112,10 @@ mod memory {
             // As a round removes them: one call per portion of files it
             // reads, then the maintenance of the table.
             let ((), memory) = measured(async {
-                let mut table = Table::open(&dir, "t0", shape(), Some(&committed))
-                    .await
-                    .unwrap();
+                let mut table =
+                    Table::open(&dir, "t0", &numbered(&shape()), shape(), Some(&committed))
+                        .await
+                        .unwrap();
                 for portion in ids.chunks(crate::tables::BATCH) {
                     table.delete_rows("id", portion).await.unwrap();
                 }

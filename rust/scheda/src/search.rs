@@ -1526,7 +1526,9 @@ mod memory {
 
     /// A table of `rows` rows with a vector each, its indices made.
     async fn table_of(dir: &std::path::Path, rows: usize) -> Dataset {
-        let mut table = Stored::open(dir, "t0", shape(), None).await.unwrap();
+        let mut table = Stored::open(dir, "t0", &Default::default(), shape(), None)
+            .await
+            .unwrap();
         for start in (0..rows).step_by(20_000) {
             let chunk: Vec<Row> = (start..rows.min(start + 20_000))
                 .map(|n| {
@@ -1551,7 +1553,7 @@ mod memory {
         }
         table.maintain(1, None).await.unwrap();
         let versions = table.versions();
-        let path = dir.join("t0.lance");
+        let path = dir.join("t0d");
         Dataset::open(path.to_str().unwrap())
             .await
             .unwrap()
@@ -1613,7 +1615,7 @@ mod memory {
     /// `rows / 100`-th is of the kind `rare`, its indices made.
     async fn filtered_table_of(dir: &std::path::Path, rows: usize) -> Dataset {
         const SHORT: usize = 16;
-        let mut table = Stored::open(dir, "t0", shape_of(SHORT), None)
+        let mut table = Stored::open(dir, "t0", &Default::default(), shape_of(SHORT), None)
             .await
             .unwrap();
         let every = rows / 100;
@@ -1645,7 +1647,7 @@ mod memory {
         }
         table.maintain(1, None).await.unwrap();
         let versions = table.versions();
-        let path = dir.join("t0.lance");
+        let path = dir.join("t0d");
         Dataset::open(path.to_str().unwrap())
             .await
             .unwrap()

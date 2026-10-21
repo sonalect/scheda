@@ -3,9 +3,17 @@
 //!
 //! ```text
 //! .scheda/index/current              the name of the live generation
-//! .scheda/index/g-{…}/commit         what the generation holds, written last
-//! .scheda/index/g-{…}/t{n}.…         the tables of its collections
+//! .scheda/index/g{n}/commit          what the generation holds, written last
+//! .scheda/index/g{n}/t{n}{kind}      the datasets of the tables of its collections
 //! ```
+//!
+//! The names are short because the whole path must stay within a budget,
+//! with Lance's own `_indices/{uuid}/…` below them. `n` of a generation is
+//! one more than the largest number of the generations on disk. A table
+//! has the number its collection was given (`t{n}`), and its datasets the
+//! kinds `d` (the Documents), `f` (the files), and `x{k}` (the texts of
+//! the `text list` vector column numbered `k` in that table). A number is
+//! given once and not reused within a generation.
 //!
 //! A generation is built from nothing (the first build, `Index.Reindex`)
 //! beside the live one, which keeps answering, and becomes the live one
@@ -35,7 +43,6 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scheda_api::v1::VaultErrorCode;
@@ -44,15 +51,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Context, Error, Fault, io};
 use crate::fs::{atomic_write_private, create_dir_private, restrict_dir};
-use crate::index::State;
+use crate::index::{State, generation_number};
 use crate::store::{Column, Shape, VERSION_LIFETIME, Versions};
 
 const CURRENT_FILE: &str = "current";
 const COMMIT_FILE: &str = "commit";
-const PREFIX: &str = "g-";
-
-/// Numbers the generations this process makes.
-static NEXT: AtomicU64 = AtomicU64::new(0);
+const PREFIX: &str = "g";
 
 /// The ports an Index is built with, as far as they shape it.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -88,6 +92,13 @@ pub(crate) struct Declared {
 pub(crate) struct Table {
     /// The folder name of its datasets (`t{n}`).
     pub(crate) name: String,
+    /// The number of the texts dataset of each `text list` vector column
+    /// the table has: `t{n}x{k}`.
+    #[serde(default)]
+    pub(crate) texts: BTreeMap<String, u32>,
+    /// The number the next texts dataset of the table gets.
+    #[serde(default)]
+    pub(crate) next_text: u32,
     /// Its columns as the table holds them: the declaration's `index_scope`
     /// applied.
     pub(crate) shape: Shape,
@@ -302,7 +313,7 @@ impl Commit {
         State::parse(&self.state)
     }
 
-    /// The folder name of a new table, and the count moved on.
+    /// The folder name of a new table (`t{n}`), and the count moved on.
     pub(crate) fn new_table(&mut self) -> String {
         let name = format!("t{}", self.next_table);
         self.next_table += 1;
@@ -378,14 +389,20 @@ impl Layout {
     ///
     /// `STORAGE` when the folder cannot be made.
     pub(crate) fn create(&self, _cx: &Blocking) -> Result<Generation, Error> {
-        let name = format!(
-            "{PREFIX}{:x}-{:x}-{:x}",
-            now_millis(),
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        let generation = self.generation(&name);
         create_dir_private(&self.root).context("create the Index folder")?;
+        let mut next = 0u64;
+        for entry in fs::read_dir(&self.root)
+            .map_err(io)
+            .context("list the generations of the Index")?
+        {
+            let entry = entry
+                .map_err(io)
+                .context("list the generations of the Index")?;
+            if let Some(n) = entry.file_name().to_str().and_then(number_of) {
+                next = next.max(n.saturating_add(1));
+            }
+        }
+        let generation = self.generation(&format!("{PREFIX}{next}"));
         create_dir_private(&generation.dir).context("create a generation of the Index")?;
         restrict_dir(&generation.dir)?;
         Ok(generation)
@@ -440,12 +457,28 @@ impl Layout {
 
 /// Whether `name` is the name of a generation.
 fn valid_name(name: &str) -> bool {
-    name.strip_prefix(PREFIX).is_some_and(|rest| {
-        !rest.is_empty()
-            && rest
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
-    })
+    number_of(name).is_some()
+}
+
+/// The number in a generation's name `g{n}`; `None` for any other name.
+fn number_of(name: &str) -> Option<u64> {
+    generation_number(name)
+}
+
+/// Whether the folder `folder` is a dataset of `dropped`: a table (`t3`,
+/// all its datasets, which follow its number with a letter) or a texts
+/// dataset (`t3x0`, itself).
+fn dataset_of(folder: &str, dropped: &str) -> bool {
+    match folder.strip_prefix(dropped) {
+        Some("") => true,
+        Some(rest) => {
+            let table = dropped
+                .strip_prefix('t')
+                .is_some_and(|digits| digits.bytes().all(|byte| byte.is_ascii_digit()));
+            table && rest.starts_with(|c: char| c.is_ascii_alphabetic())
+        }
+        None => false,
+    }
 }
 
 /// One generation of the Index.
@@ -489,10 +522,10 @@ impl Generation {
     }
 
     /// Removes the folders of the tables and texts datasets `commit`
-    /// dropped more than an hour ago, and forgets those it removed: every
-    /// folder whose name begins with the dropped name and a dot (`t3.`
-    /// covers `t3.lance`, `t3.files.lance`, and `t3.texts.{column}.lance`,
-    /// never `t30.lance`). Under `index.lock`; `commit` is written after.
+    /// dropped more than an hour ago, and forgets those it removed: the
+    /// dataset folders of a dropped table `t3` (`t3d`, `t3f`, `t3x0`, …,
+    /// never `t30d`), or the one folder of a dropped texts dataset `t3x0`.
+    /// Under `index.lock`; `commit` is written after.
     pub(crate) fn sweep_tables(&self, _cx: &Blocking, commit: &mut Commit) {
         let now = now_millis();
         if !commit.dropped.iter().any(|table| table.due(now)) {
@@ -511,10 +544,9 @@ impl Generation {
             }
             // A table that cannot be removed now (a reader holds a file of
             // it open) stays listed, and the next round tries again.
-            let prefix = format!("{}.", table.name);
             let removed = names
                 .iter()
-                .filter(|name| name.starts_with(&prefix))
+                .filter(|name| dataset_of(name, &table.name))
                 .all(|name| match fs::remove_dir_all(self.dir.join(name)) {
                     Ok(()) => true,
                     Err(err) => err.kind() == std::io::ErrorKind::NotFound,
@@ -545,6 +577,7 @@ impl Generation {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use super::{
@@ -553,10 +586,14 @@ mod tests {
 
     #[test]
     fn only_names_of_generations_are_generations() {
-        assert!(valid_name("g-18f3a-1c2-0"));
-        assert!(!valid_name("g-"));
+        assert!(valid_name("g0"));
+        assert!(valid_name("g18"));
+        assert!(!valid_name("g"));
+        assert!(!valid_name("g01"));
+        assert!(!valid_name("g-1"));
         assert!(!valid_name("journal"));
-        assert!(!valid_name("g-../x"));
+        assert!(!valid_name("g1/../x"));
+        assert!(!valid_name("g-18f3a-1c2-0"));
         assert!(!valid_name("current"));
     }
 
@@ -566,16 +603,8 @@ mod tests {
         let root = base.join(format!("scheda-generation-sweep-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         crate::testing::remove_when_the_test_ends(&root);
-        let generation = Layout::new(&root).generation("g-1");
-        for name in [
-            "t3.lance",
-            "t3.files.lance",
-            "t3.texts.tags.lance",
-            "t30.lance",
-            "t4.lance",
-            "t4.texts.tags.lance",
-            "t4.texts.tags_2.lance",
-        ] {
+        let generation = Layout::new(&root).generation("g1");
+        for name in ["t3d", "t3f", "t3x0", "t30d", "t4d", "t4x0", "t4x1"] {
             std::fs::create_dir_all(generation.dir().join(name).join("data")).unwrap();
         }
         let mut commit = Commit::empty(Ports::default());
@@ -586,7 +615,7 @@ mod tests {
                 stamped: true,
             },
             Retired {
-                name: String::from("t4.texts.tags"),
+                name: String::from("t4x0"),
                 at: 0,
                 stamped: true,
             },
@@ -612,7 +641,7 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
         left.sort();
-        assert_eq!(left, ["t30.lance", "t4.lance", "t4.texts.tags_2.lance"]);
+        assert_eq!(left, ["t30d", "t4d", "t4x1"]);
         let kept: Vec<&str> = commit
             .dropped
             .iter()
@@ -639,6 +668,8 @@ mod tests {
     fn table(live: Versions, replaced: Vec<Replaced>) -> Table {
         Table {
             name: String::from("t0"),
+            texts: BTreeMap::new(),
+            next_text: 0,
             shape: crate::store::Shape::default(),
             declared: super::Declared::default(),
             versions: live,

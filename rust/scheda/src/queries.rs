@@ -238,18 +238,19 @@ impl Reading {
     pub(crate) fn table(&self, collection: &str) -> Option<Table> {
         let dir = self.generation.dir();
         self.commit.tables.get(collection).map(|table| Table {
-            path: dir.join(format!("{}.lance", table.name)),
+            path: dir.join(crate::store::rows_name(&table.name)),
             version: table.versions.rows,
             columns: table.shape.columns.clone(),
             texts: table
                 .versions
                 .texts
                 .iter()
-                .map(|(column, version)| {
-                    (
+                .filter_map(|(column, version)| {
+                    let number = table.texts.get(column)?;
+                    Some((
                         column.clone(),
-                        (texts_path(dir, &table.name, column), *version),
-                    )
+                        (texts_path(dir, &table.name, *number), *version),
+                    ))
                 })
                 .collect(),
         })

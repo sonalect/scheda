@@ -1,8 +1,10 @@
 //! The id maps of the journals: for each journal, which segment holds the
 //! line of each id.
 //!
-//! A map is a file of the Index, `index/journal/{collection}/ids`, written
-//! whole by the indexer only. It records the state of the Vault it was made
+//! A map is a file of the Index, `index/journal/{n}/ids`, where `n` is the
+//! number the Index gave the journal (`index/journal/numbers`; never the
+//! collection's name, which could be 255 bytes), written whole by the
+//! indexer only. It records the state of the Vault it was made
 //! at, so it is true on its own: a line it does not list is looked for in
 //! the segments that differ between that state and `HEAD` (a tree
 //! comparison, no process), and only a journal with no map is scanned
@@ -28,7 +30,7 @@ use scheda_api::v1::{Problem, VaultErrorCode};
 use crate::check::problem;
 use crate::collection::{Declaration, Declarations, Kind};
 use crate::error::{Context, Error, Fault, io};
-use crate::index::{Index, Round, Side, State};
+use crate::index::{Index, Numbers, Round, Side, State};
 use crate::isolated;
 use crate::journal::{self, Line, SegmentMemo};
 use crate::repo::{Delta, Snap, Views};
@@ -235,7 +237,10 @@ fn update(
 /// The map file of the journal `name`; `None` when there is none or it is
 /// not a map.
 fn read_map(index: &Index, name: &str) -> Result<Option<IdMap>, Error> {
-    match fs::read(index.ids_file(name)) {
+    let Some(file) = index.ids_file(name) else {
+        return Ok(None);
+    };
+    match fs::read(file) {
         Ok(bytes) => Ok(IdMap::parse(&bytes).ok()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(io(err)).context("read an id map"),
@@ -250,13 +255,16 @@ impl Side for JournalMaps {
     fn apply(&mut self, round: &mut Round<'_>) -> Result<(), Error> {
         let index = round.index();
         let declarations = round.declarations();
-        remove_stale(index, declarations)?;
+        let numbers = number_journals(index, declarations)?;
         for decl in declarations
             .iter()
             .filter(|decl| decl.kind() == Kind::Journal)
         {
             let snap = round.views().of(decl.repo());
-            let file = index.ids_file(decl.name());
+            let Some(n) = numbers.of(decl.name()) else {
+                continue;
+            };
+            let file = index.map_dir(n).join("ids");
             let to = round.to();
             let existing = if round.is_whole(decl.name()) {
                 None
@@ -290,8 +298,46 @@ impl Side for JournalMaps {
     }
 }
 
-/// Removes the maps of the collections that are not journals now.
-fn remove_stale(index: &Index, declarations: &Declarations) -> Result<(), Error> {
+/// Gives every journal a number, drops the numbers of collections that are
+/// not journals now with their maps, and records the numbers before any map
+/// they name is written.
+///
+/// Numbers that are missing or broken while maps stand beside them are not
+/// trusted: the maps go, and are built again.
+fn number_journals(index: &Index, declarations: &Declarations) -> Result<Numbers, Error> {
+    let is_journal = |name: &str| {
+        declarations
+            .get(name)
+            .is_some_and(|decl| decl.kind() == Kind::Journal)
+    };
+    let mut changed = false;
+    let mut numbers = match index.read_numbers()? {
+        Some(numbers) => numbers,
+        None => {
+            match fs::remove_dir_all(index.journal_dir()) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(io(err)).context("remove the id maps"),
+            }
+            Numbers::default()
+        }
+    };
+    changed |= numbers.retain(is_journal);
+    for decl in declarations
+        .iter()
+        .filter(|decl| decl.kind() == Kind::Journal)
+    {
+        changed |= numbers.assign(decl.name()).1;
+    }
+    if changed {
+        index.write_numbers(&numbers)?;
+    }
+    remove_stale(index, &numbers)?;
+    Ok(numbers)
+}
+
+/// Removes the maps of the numbers no journal holds.
+fn remove_stale(index: &Index, numbers: &Numbers) -> Result<(), Error> {
     let entries = match fs::read_dir(index.journal_dir()) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -299,12 +345,19 @@ fn remove_stale(index: &Index, declarations: &Declarations) -> Result<(), Error>
     };
     for entry in entries {
         let entry = entry.map_err(io).context("read the id map folder")?;
-        let name = entry.file_name();
-        let keep = name.to_str().is_some_and(|name| {
-            declarations
-                .get(name)
-                .is_some_and(|decl| decl.kind() == Kind::Journal)
-        });
+        let is_dir = entry
+            .file_type()
+            .map_err(io)
+            .context("read the id map folder")?
+            .is_dir();
+        if !is_dir {
+            continue;
+        }
+        let keep = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+            .is_some_and(|n| numbers.holds(n));
         if !keep {
             fs::remove_dir_all(entry.path())
                 .map_err(io)
@@ -346,7 +399,10 @@ impl IdMaps {
     /// reason (missing, a folder in its way, a mode) is a journal with no
     /// map, and a lookup then scans, as it always may.
     fn load(&self, name: &str) -> Option<Arc<IdMap>> {
-        let file = self.index.ids_file(name);
+        let Some(file) = self.index.ids_file(name) else {
+            self.cache().remove(name);
+            return None;
+        };
         let Ok(meta) = fs::metadata(&file) else {
             self.cache().remove(name);
             return None;
@@ -565,8 +621,21 @@ pub(crate) fn check_journal_id_maps(
         .iter()
         .filter(|decl| decl.kind() == Kind::Journal)
     {
-        let rel = format!(".scheda/index/journal/{}/ids", decl.name());
-        let bytes = match fs::read(index.ids_file(decl.name())) {
+        let Some(file) = index.ids_file(decl.name()) else {
+            continue;
+        };
+        let rel = file
+            .strip_prefix(
+                index
+                    .root()
+                    .parent()
+                    .and_then(Path::parent)
+                    .unwrap_or(Path::new("")),
+            )
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let bytes = match fs::read(&file) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => return Err(io(err)).context("check_journal_id_maps: read a map"),
@@ -781,8 +850,12 @@ mod tests {
             let at = map.intern(segment);
             map.ids.insert((*id).to_owned(), at);
         }
-        Index::new(path)
-            .write(&Index::new(path).ids_file("log"), &map.encode().unwrap())
+        let index = Index::new(path);
+        let mut numbers = index.read_numbers().unwrap().unwrap_or_default();
+        numbers.assign("log");
+        index.write_numbers(&numbers).unwrap();
+        index
+            .write(&index.ids_file("log").unwrap(), &map.encode().unwrap())
             .unwrap();
     }
 
@@ -869,7 +942,7 @@ mod tests {
     async fn a_journal_with_no_map_refuses_a_duplicate_as_well() {
         let scratch = Scratch::new("append-no-map");
         let (path, vault) = scratch.segmented(12).await;
-        std::fs::remove_file(Index::new(&path).ids_file("log")).unwrap();
+        std::fs::remove_file(Index::new(&path).ids_file("log").unwrap()).unwrap();
         let (result, _) = append(&vault, creation("l01", false)).await;
         assert_eq!(
             result.unwrap_err().code(),
@@ -900,7 +973,7 @@ mod tests {
         let scratch = Scratch::new("lookup-no-map");
         // Six segments of five lines.
         let (path, vault) = scratch.segmented(30).await;
-        std::fs::remove_file(Index::new(&path).ids_file("log")).unwrap();
+        std::fs::remove_file(Index::new(&path).ids_file("log").unwrap()).unwrap();
         step(&vault, move |_cx, vault| {
             let declarations = vault.declarations_now()?;
             let decl = declarations.get("log").unwrap();
@@ -974,9 +1047,9 @@ mod tests {
             .find(|entry| entry.file_name().to_string_lossy().ends_with(".jsonl"))
             .map(|entry| format!("log/{}", entry.file_name().to_string_lossy()))
             .unwrap();
-        let file = ".scheda/index/journal/log/ids";
+        let file = ".scheda/index/journal/0/ids";
 
-        std::fs::write(Index::new(&path).ids_file("log"), "damaged").unwrap();
+        std::fs::write(Index::new(&path).ids_file("log").unwrap(), "damaged").unwrap();
         let problems = check();
         assert_eq!(problems.len(), 1);
         assert_eq!(

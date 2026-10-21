@@ -191,7 +191,80 @@ fn create_temporary(
 /// disk, and renames it over `path`.
 fn fill_then_rename(file: fs::File, tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Error> {
     fill(file, bytes)?;
+    #[cfg(test)]
+    syncs::record(path);
     rename_replace(tmp, path)
+}
+
+/// Flushes the file at `path` to disk.
+///
+/// # Errors
+///
+/// `STORAGE` when it cannot be opened or flushed.
+#[cfg(feature = "index")]
+pub(crate) fn sync_file(path: &Path) -> Result<(), Error> {
+    fs::File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(io)
+        .with_context(|| format!("flush {} to disk", path.display()))?;
+    #[cfg(test)]
+    syncs::record(path);
+    Ok(())
+}
+
+/// Flushes the folder at `path` (the names in it) to disk. A system that
+/// cannot flush a folder keeps it to the file system, as git does there.
+///
+/// # Errors
+///
+/// `STORAGE` when it cannot be opened or flushed.
+#[cfg(feature = "index")]
+pub(crate) fn sync_dir(path: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        fs::File::open(path)
+            .and_then(|dir| dir.sync_all())
+            .map_err(io)
+            .with_context(|| format!("flush {} to disk", path.display()))?;
+        #[cfg(test)]
+        syncs::record(path);
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+/// The files and folders the tests saw flushed, in order.
+#[cfg(test)]
+pub(crate) mod syncs {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, PoisonError};
+
+    static LOG: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    pub(super) fn record(path: &Path) {
+        LOG.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(path.to_path_buf());
+    }
+
+    /// How many flushes there are so far.
+    #[cfg(feature = "index")]
+    pub(crate) fn mark() -> usize {
+        LOG.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
+    /// The paths under `root` flushed after `mark`, in order.
+    #[cfg(feature = "index")]
+    pub(crate) fn since(mark: usize, root: &Path) -> Vec<PathBuf> {
+        LOG.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .skip(mark)
+            .filter(|path| path.starts_with(root))
+            .cloned()
+            .collect()
+    }
 }
 
 /// Writes `bytes` into the temporary `file`, flushes it to disk, and closes
@@ -587,7 +660,7 @@ fn check_owner_only_tree(
         && path
             .file_name()
             .and_then(std::ffi::OsStr::to_str)
-            .is_some_and(|name| name.starts_with("g-"))
+            .is_some_and(|name| crate::index::generation_number(name).is_some())
     {
         return Ok(());
     }

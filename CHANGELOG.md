@@ -42,6 +42,33 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- The Index's folders and the id maps of journals have short names, so
+  that no path under `.scheda/index` passes 80 characters however long a
+  collection or a column is named (Lance's own `_indices/{uuid}/…` files
+  take most of it; the longest measured is 72, against 303 before). A
+  generation is `g{n}`, a table's datasets are `t{n}d` (Documents),
+  `t{n}f` (files), and `t{n}x{k}` (the texts of a `text list` vector
+  column); a journal's id map is `journal/{n}/ids`, `n` a number the Index
+  keeps in `journal/numbers`, not the collection's name. The Index's format
+  number is 4: the Index is rebuilt once, on the first open by this
+  version, and the texts are embedded again. Nothing outside
+  `.scheda/index` changes.
+- The indexer round flushes to disk the files Lance wrote for the new
+  versions of a table (data, deletion, transaction, manifest, and index
+  files), then the folders that received them, and only then writes the
+  Index's state file that names those versions. Lance flushes nothing
+  itself, so before this a power loss or a crash could leave the state
+  naming versions whose files were gone, which costs a rebuild of the
+  Index: at millions of Documents that embeds every text again. Now a crash costs at
+  most the last round, which the next one does again from the versions the
+  state names; versions Lance holds beyond them are left over from it and
+  do not stop it or cause a rebuild. The flush runs in the background, a
+  write does not wait for it.
+- The longest path under a Vault without a work tree is at most 120
+  characters from its root, with collection names of 255 bytes, columns of
+  255 characters with a text, a scalar and a vector index, a journal, an
+  isolated collection, a mirror sync, and `initial_branch` `main` (86
+  measured, in Lance's `_indices/{uuid}/…`). A test holds the budget.
 - The folder of a standard collection and the segment folder of a journal
   hold at most 64 entries, in the Vault's repository and in `.isolated/`
   alike. A folder of

@@ -13,10 +13,15 @@
 //! .scheda/index.lock        flock, held for one round
 //! .scheda/index/format      the number of the layout of these files
 //! .scheda/index/commit      the state the journal id maps reflect, written last
-//! .scheda/index/journal/    the id maps of the journals
+//! .scheda/index/journal/numbers   the number of each journal, a JSON file
+//! .scheda/index/journal/{n}/ids   the id map of the journal numbered `n`
 //! .scheda/index/current     the live generation of the Lance tables (`index`)
-//! .scheda/index/g-…/        one generation of the Lance tables (`index`)
+//! .scheda/index/g{n}/       one generation of the Lance tables (`index`)
 //! ```
+//!
+//! The names under `index/` are short on purpose: the whole path must stay
+//! within a budget (see the tests of the Vault). A journal's id map is
+//! named by a number the Index assigns, never by the collection.
 //!
 //! Every file is written whole (a temporary file, then a rename) and is
 //! owner-only. Only the indexer writes under `index/`, under the lock; a
@@ -25,20 +30,22 @@
 //! `columns`, `stale`) is not read either, and stays until the Index is
 //! made again.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 
 use git2::Oid;
+use serde::{Deserialize, Serialize};
 
 use crate::collection::{self, Declarations};
-use crate::error::{Context, Error, io};
+use crate::error::{Context, Error, Fault, io};
 use crate::fs::{
     Flock, atomic_write_private, create_dir_private, remove_temporary, restrict_dir,
     restrict_file_below,
 };
 use crate::isolated;
 use crate::repo::{Delta, Repo, Snap, Views};
+use scheda_api::v1::VaultErrorCode;
 
 /// The folders directly in `dir` (none when it is missing); a link is not
 /// one.
@@ -66,11 +73,70 @@ fn folders_in(dir: &Path) -> Result<Vec<PathBuf>, Error> {
 /// The number of the layout of the files of the Index. An Index with another
 /// number (the Tantivy and USearch Index of `0.22` is 2) is removed whole
 /// and made again, not migrated.
-pub(crate) const FORMAT: u32 = 3;
+///
+/// 4: short names (`g{n}`, `t{n}{kind}`, id maps named by a number).
+pub(crate) const FORMAT: u32 = 4;
 
 const FORMAT_FILE: &str = "format";
 const COMMIT_FILE: &str = "commit";
 const JOURNAL_DIR: &str = "journal";
+const NUMBERS_FILE: &str = "numbers";
+
+/// The numbers of the journals: the folder name of each journal's id map.
+/// A number is assigned once and is not reused while the file lives (a
+/// reset of the maps removes it): a dropped journal's number stays spent.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct Numbers {
+    /// The number the next journal gets.
+    next: u32,
+    /// The collection name of each journal that has a number.
+    numbers: BTreeMap<String, u32>,
+}
+
+impl Numbers {
+    /// The number of the journal `collection`, if it has one.
+    pub(crate) fn of(&self, collection: &str) -> Option<u32> {
+        self.numbers.get(collection).copied()
+    }
+
+    /// The number of `collection`, assigning the next one when it has none.
+    /// `true` in the second place when one was assigned.
+    pub(crate) fn assign(&mut self, collection: &str) -> (u32, bool) {
+        if let Some(n) = self.of(collection) {
+            return (n, false);
+        }
+        let n = self.next;
+        self.next += 1;
+        self.numbers.insert(collection.to_owned(), n);
+        (n, true)
+    }
+
+    /// Takes away the numbers of the collections `keep` does not hold;
+    /// `true` when any went. Their numbers are not given out again.
+    pub(crate) fn retain(&mut self, keep: impl Fn(&str) -> bool) -> bool {
+        let before = self.numbers.len();
+        self.numbers.retain(|name, _| keep(name));
+        self.numbers.len() != before
+    }
+
+    /// Whether `n` is the number of some journal.
+    pub(crate) fn holds(&self, n: u32) -> bool {
+        self.numbers.values().any(|&held| held == n)
+    }
+}
+
+/// The number in the name `g{n}` of a generation of the Index; `None` for
+/// any other name (a number with a sign or a leading zero is not one).
+pub(crate) fn generation_number(name: &str) -> Option<u64> {
+    let digits = name.strip_prefix('g')?;
+    if digits.is_empty() || (digits.len() > 1 && digits.starts_with('0')) {
+        return None;
+    }
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
 
 /// The state of the Vault the Index reflects: the commit `HEAD` names in the
 /// main repository, and in the nested repository (`None` where there is no
@@ -194,9 +260,35 @@ impl Index {
         self.root.join(JOURNAL_DIR)
     }
 
-    /// The id map file of the journal `collection`.
-    pub(crate) fn ids_file(&self, collection: &str) -> PathBuf {
-        self.journal_dir().join(collection).join("ids")
+    /// The numbers of the journals; `None` when the file is missing or is
+    /// not one (the maps beside it are then not trusted).
+    pub(crate) fn read_numbers(&self) -> Result<Option<Numbers>, Error> {
+        match fs::read(self.journal_dir().join(NUMBERS_FILE)) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(io(err)).context("read the numbers of the journals"),
+        }
+    }
+
+    /// Records the numbers of the journals. Before any map they name.
+    pub(crate) fn write_numbers(&self, numbers: &Numbers) -> Result<(), Error> {
+        let bytes = serde_json::to_vec(numbers).map_err(|err| {
+            Fault::new(VaultErrorCode::Storage, "the numbers cannot be written").with_source(err)
+        })?;
+        self.write(&self.journal_dir().join(NUMBERS_FILE), &bytes)
+            .context("write the numbers of the journals")
+    }
+
+    /// The folder of the id map numbered `n`.
+    pub(crate) fn map_dir(&self, n: u32) -> PathBuf {
+        self.journal_dir().join(n.to_string())
+    }
+
+    /// The id map file of the journal `collection`; `None` when it has no
+    /// number.
+    pub(crate) fn ids_file(&self, collection: &str) -> Option<PathBuf> {
+        let numbers = self.read_numbers().ok().flatten()?;
+        Some(self.map_dir(numbers.of(collection)?).join("ids"))
     }
 
     /// Takes the lock of a round without waiting: `flock` on

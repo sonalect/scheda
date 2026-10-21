@@ -533,10 +533,11 @@ impl Work<'_> {
                 (Some(table), _) => (table.name.clone(), Some(table.versions.clone())),
                 (None, _) => (self.commit.new_table(), None),
             };
-            self.keep_texts_of(known.as_ref(), &table_name, &shape);
+            let (texts, next_text) = self.number_texts(known.as_ref(), &table_name, &shape);
             let mut table = Table::open(
                 self.generation.dir(),
                 &table_name,
+                &texts,
                 shape.clone(),
                 committed.as_ref(),
             )
@@ -554,6 +555,13 @@ impl Work<'_> {
                 .maintain(self.commit.rounds + 1, keep.as_ref())
                 .await
                 .with_context(|| format!("maintain the table of {name}"))?;
+            // Lance flushes nothing: the files of the versions the `commit`
+            // is about to name reach the disk before it is written, so a
+            // crash costs at most this round, never the whole Index.
+            let unsynced = table.take_unsynced();
+            blocking(move |_cx| unsynced.sync())
+                .await
+                .with_context(|| format!("flush the table of {name} to disk"))?;
             let versions = table.versions();
             let mut replaced = Vec::new();
             if let Some(known) = known {
@@ -571,6 +579,8 @@ impl Work<'_> {
                 name.to_owned(),
                 generation::Table {
                     name: table_name,
+                    texts,
+                    next_text,
                     shape,
                     declared,
                     versions,
@@ -583,28 +593,37 @@ impl Work<'_> {
         Ok(())
     }
 
-    /// Brings the list of dropped texts datasets in step with the table
-    /// `name` of `shape`, which was `known`: the texts dataset of a `text
-    /// list` vector column the table no longer has is dropped (a reader of
-    /// an older `commit` may still read it for an hour), and one it has is
-    /// not, though an earlier shape of the table dropped it.
-    fn keep_texts_of(&mut self, known: Option<&generation::Table>, name: &str, shape: &Shape) {
-        let kept: HashSet<String> = shape
-            .list_vectors()
-            .map(|column| texts_name(name, column))
-            .collect();
-        self.commit
-            .dropped
-            .retain(|dropped| !kept.contains(&dropped.name));
-        let Some(known) = known else {
-            return;
-        };
-        for column in known.versions.texts.keys() {
-            let texts = texts_name(name, column);
-            if !kept.contains(&texts) {
-                self.commit.dropped.push(Retired::now(texts));
+    /// Numbers the texts datasets of the table `name` of `shape`, which
+    /// was `known`, and brings the list of dropped texts datasets in step:
+    /// a `text list` vector column the table did not have gets the next
+    /// number, which no column had before; the texts dataset of one the
+    /// table no longer has is dropped (a reader of an older `commit` may
+    /// still read it for an hour). Returns the numbers and the next one.
+    fn number_texts(
+        &mut self,
+        known: Option<&generation::Table>,
+        name: &str,
+        shape: &Shape,
+    ) -> (BTreeMap<String, u32>, u32) {
+        let mut texts = known.map(|known| known.texts.clone()).unwrap_or_default();
+        let mut next = known.map_or(0, |known| known.next_text);
+        let columns: HashSet<&str> = shape.list_vectors().collect();
+        texts.retain(|column, number| {
+            let kept = columns.contains(column.as_str());
+            if !kept {
+                self.commit
+                    .dropped
+                    .push(Retired::now(texts_name(name, *number)));
+            }
+            kept
+        });
+        for column in shape.list_vectors() {
+            if !texts.contains_key(column) {
+                texts.insert(column.to_owned(), next);
+                next += 1;
             }
         }
+        (texts, next)
     }
 
     /// The vectors the earlier generation holds for `collection`. `None`
@@ -619,6 +638,7 @@ impl Work<'_> {
         Vectors::open(
             &earlier.dir,
             &table.name,
+            &table.texts,
             table.shape.clone(),
             &table.versions,
         )
@@ -1463,6 +1483,7 @@ mod tests {
     use crate::error::Error;
     use crate::generation::Layout;
     use crate::index::Index;
+    use crate::indexer::hooks;
     use crate::ports::{FixedEmbedder, Ports};
     use crate::store::texts_name;
     use crate::testing::{
@@ -1594,7 +1615,7 @@ mod tests {
             let commit = generation.read_commit(cx)?.unwrap();
             let table = commit.tables.get(&collection).unwrap();
             Ok((
-                generation.dir().join(format!("{}.lance", table.name)),
+                generation.dir().join(crate::store::rows_name(&table.name)),
                 table.versions.rows,
             ))
         })
@@ -1648,6 +1669,129 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// The longest relative path under `root`, with its length in bytes.
+    fn longest_path(root: &std::path::Path) -> (usize, String) {
+        fn walk(dir: &std::path::Path, root: &std::path::Path, best: &mut (usize, String)) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                if rel.len() > best.0 {
+                    *best = (rel.len(), rel);
+                }
+                if path.is_dir() {
+                    walk(&path, root, best);
+                }
+            }
+        }
+        let mut best = (0, String::new());
+        walk(root, root, &mut best);
+        best
+    }
+
+    /// `Pipes` with columns of 200 bytes.
+    struct Wide(Pipes);
+
+    const WIDE: usize = 200;
+
+    fn wide(name: &str) -> String {
+        format!("{name}{}", "c".repeat(WIDE - name.len()))
+    }
+
+    impl ProjectorSync for Wide {
+        fn describe(&self, empty: Empty) -> Result<ProjectorDescriptor, Error> {
+            self.0.describe(empty)
+        }
+
+        fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
+            Ok(IndexSchema {
+                columns: vec![
+                    column(&wide("title"), ColumnKind::COLUMN_KIND_TEXT).with_fts(true),
+                    column(&wide("n"), ColumnKind::COLUMN_KIND_INTEGER).with_scalar_index(true),
+                    column(&wide("body"), ColumnKind::COLUMN_KIND_TEXT).with_vector(true),
+                ],
+                ..IndexSchema::default()
+            })
+        }
+
+        fn project(&self, document: RawDocument) -> Result<IndexDoc, Error> {
+            let mut doc = self.0.project(document)?;
+            doc.values = doc
+                .values
+                .into_iter()
+                .map(|(name, value)| (wide(&name), value))
+                .collect();
+            Ok(doc)
+        }
+    }
+
+    /// The most a path under the Index may take, relative to
+    /// `.scheda/index`: Lance's own `_indices/{uuid}/page_lookup.lance` and
+    /// `_transactions/{n}-{uuid}.txn` below the generation and table
+    /// folders make up most of it.
+    const INDEX_PATH_BUDGET: usize = 80;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn no_path_under_the_index_passes_the_budget_with_the_longest_names() {
+        let scratch = Scratch::new("budget");
+        let (mut ports, ..) = ports();
+        ports.projector = Some(ProjectorRef::from_sync(Wide(Pipes {
+            projected: Arc::new(AtomicUsize::new(0)),
+        })));
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        let journal = "j".repeat(200);
+        create_collection(
+            &vault,
+            serde_json::json!({"name": journal, "schema": {"journal": {}}}),
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        for n in 0..3 {
+            create(
+                &vault,
+                &journal,
+                DocumentCreation::default()
+                    .with_id(format!("l{n}"))
+                    .with_raw(format!("Line {n}|7|said {n}").into_bytes())
+                    .with_note("test"),
+            )
+            .await
+            .unwrap();
+            upsert(
+                &vault,
+                "notes",
+                upsert_of(
+                    &format!("a{n}.md"),
+                    format!("Alpha {n}|{n}|body {n}").as_bytes(),
+                ),
+            )
+            .await
+            .unwrap();
+        }
+        wait_indexed(&vault).await;
+        let root = Index::new(vault.path()).root().to_path_buf();
+        let (len, path) = longest_path(&root);
+        assert!(
+            len <= INDEX_PATH_BUDGET,
+            "the longest path under .scheda/index is {len} characters: {path}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1983,7 +2127,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let dataset = Dataset::open(dir.join(format!("{name}.lance")).to_str().unwrap())
+        let dataset = Dataset::open(dir.join(crate::store::rows_name(&name)).to_str().unwrap())
             .await
             .unwrap()
             .checkout_version(version)
@@ -2436,7 +2580,7 @@ mod tests {
                     .unwrap()
                     .file_name()
                     .to_string_lossy()
-                    .starts_with("g-")
+                    .starts_with('g')
             })
             .count();
         assert_eq!(generations, 2, "the live one and the one it replaced");
@@ -2470,7 +2614,7 @@ mod tests {
         wait_indexed(&vault).await;
         assert_eq!(embedded.load(Ordering::SeqCst), 30);
         let (dir, table) = live_table(&vault, "notes").await;
-        std::fs::remove_dir_all(dir.join(format!("{table}.lance")).join("data")).unwrap();
+        std::fs::remove_dir_all(dir.join(crate::store::rows_name(&table)).join("data")).unwrap();
 
         reindexed(&vault).await;
         assert_eq!(embedded.load(Ordering::SeqCst), 60);
@@ -2571,6 +2715,147 @@ mod tests {
         assert!(rows.values().all(|(_, _, vector)| *vector));
         // Served: a new request is taken.
         vault.indexer().reindex().await.unwrap();
+        vault.close().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_round_stopped_after_lance_and_before_the_commit_is_done_again_and_nothing_else() {
+        let scratch = Scratch::new("stopped-round");
+        let (ports, _, embedded) = ports_of("model-a");
+        let options = OpenOptions::default().with_index_poll_ms(10);
+        let vault = open_with(&scratch.0, options.clone(), ports).await.unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        batch(&vault, "notes", notes(20, 0)).await.unwrap();
+        wait_indexed(&vault).await;
+        assert_eq!(embedded.load(Ordering::SeqCst), 20);
+        let path = vault.path().to_path_buf();
+        let live = live_commit(&vault).await;
+
+        // The round for these Documents stops with Lance's versions made
+        // and the `commit` not written.
+        hooks::stop_before_state(&path);
+        batch(&vault, "notes", notes(5, 20)).await.unwrap();
+        wait_until("the stopped round", || hooks::stopped_before_state(&path)).await;
+        assert_eq!(embedded.load(Ordering::SeqCst), 25);
+        vault.close().await.unwrap();
+        assert_eq!(live_commit(&vault).await, live, "the commit did not move");
+        let (dir, _) = live_table(&vault, "notes").await;
+        let (rows_dir, named) = {
+            let root = Index::new(&path).root().to_path_buf();
+            blocking(move |cx| {
+                let generation = Layout::new(&root).current(cx)?.unwrap();
+                let commit = generation.read_commit(cx)?.unwrap();
+                let table = &commit.tables["notes"];
+                Ok((
+                    generation.dir().join(crate::store::rows_name(&table.name)),
+                    table.versions.rows,
+                ))
+            })
+            .await
+            .unwrap()
+        };
+        let latest = Dataset::open(rows_dir.to_str().unwrap())
+            .await
+            .unwrap()
+            .version()
+            .version;
+        assert!(
+            latest > named,
+            "Lance holds versions ({latest}) the commit ({named}) does not name"
+        );
+        drop(vault);
+
+        // The next handle starts from the commit's versions and does that
+        // round again: it embeds the five Documents and no other.
+        let (again_ports, _, embedded) = ports_of("model-a");
+        let vault = open_with(&scratch.0, options, again_ports).await.unwrap();
+        wait_indexed(&vault).await;
+        assert_eq!(
+            embedded.load(Ordering::SeqCst),
+            5,
+            "only the Documents of the stopped round are embedded again"
+        );
+        let (again, _) = live_table(&vault, "notes").await;
+        assert_eq!(again, dir, "no rebuild made another generation");
+        let rows = rows(&vault, "notes").await;
+        assert_eq!(rows.len(), 25);
+        assert!(rows.values().all(|(_, _, vector)| *vector));
+        assert_eq!(counted(&vault, "notes").await.unwrap(), 25);
+        vault.close().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_round_flushes_the_new_files_of_lance_and_their_folders_before_its_commit() {
+        let scratch = Scratch::new("round-syncs");
+        let (ports, _, _) = ports();
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        batch(&vault, "notes", notes(20, 0)).await.unwrap();
+        wait_indexed(&vault).await;
+        let root = vault.path().join(".scheda").join("index");
+        let ends_in =
+            |path: &std::path::Path, suffix: &str| path.to_string_lossy().ends_with(suffix);
+
+        let first = crate::fs::syncs::mark();
+        batch(&vault, "notes", notes(1, 20)).await.unwrap();
+        wait_indexed(&vault).await;
+        let one = crate::fs::syncs::since(first, &root);
+        let at_commit = one
+            .iter()
+            .rposition(|path| path.file_name().is_some_and(|name| name == "commit"))
+            .expect("the commit was flushed");
+        let before: Vec<_> = one[..at_commit].to_vec();
+        for (what, found) in [
+            ("a data file", before.iter().any(|p| ends_in(p, ".lance"))),
+            ("a transaction", before.iter().any(|p| ends_in(p, ".txn"))),
+            ("a manifest", before.iter().any(|p| ends_in(p, ".manifest"))),
+            (
+                "the folder of the manifests",
+                before.iter().any(|p| ends_in(p, "_versions")),
+            ),
+            (
+                "the folder of the data files",
+                before.iter().any(|p| ends_in(p, "/data")),
+            ),
+        ] {
+            assert!(found, "{what} is flushed before the commit: {before:#?}");
+        }
+        assert!(
+            one[at_commit + 1..].iter().all(|p| !ends_in(p, ".txn")),
+            "nothing of Lance is flushed after the commit"
+        );
+
+        // The next round flushes what it adds, not what the first added.
+        let second = crate::fs::syncs::mark();
+        batch(&vault, "notes", notes(1, 21)).await.unwrap();
+        wait_indexed(&vault).await;
+        let two = crate::fs::syncs::since(second, &root);
+        let files = |paths: &[PathBuf]| -> Vec<PathBuf> {
+            paths.iter().filter(|p| p.is_file()).cloned().collect()
+        };
+        let (one, two) = (files(&one[..at_commit]), files(&two));
+        assert!(
+            two.iter()
+                .filter(|p| !p.ends_with("commit"))
+                .all(|p| !one.contains(p)),
+            "a file flushed by one round is not flushed by the next"
+        );
         vault.close().await.unwrap();
     }
 
@@ -2733,7 +3018,7 @@ mod tests {
         let (dir, commit) = live(vault).await;
         let table = commit.tables.get(collection).unwrap();
         let version = *table.versions.texts.get(column).unwrap();
-        let path = crate::store::texts_path(&dir, &table.name, column);
+        let path = crate::store::texts_path(&dir, &table.name, table.texts[column]);
         let dataset = Dataset::open(path.to_str().unwrap())
             .await
             .unwrap()
@@ -2847,7 +3132,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_table_that_loses_its_list_vectors_drops_their_texts_and_one_that_gets_them_back_keeps_them()
+    async fn a_table_that_loses_its_list_vectors_drops_their_texts_and_one_that_gets_them_back_numbers_them_anew()
      {
         let scratch = Scratch::new("text-list-scopes");
         let embedded: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
@@ -2869,8 +3154,8 @@ mod tests {
             .unwrap();
         wait_indexed(&vault).await;
         let (_, commit) = live(&vault).await;
-        let name = commit.tables.get("notes").unwrap().name.clone();
-        let texts = texts_name(&name, "phrasings");
+        let held = commit.tables.get("notes").unwrap();
+        let texts = texts_name(&held.name, held.texts["phrasings"]);
 
         crate::testing::update_collection(
             &vault,
@@ -2906,9 +3191,15 @@ mod tests {
         .unwrap();
         wait_indexed(&vault).await;
         let (_, commit) = live(&vault).await;
+        let again = commit.tables.get("notes").unwrap();
+        assert_ne!(
+            texts_name(&again.name, again.texts["phrasings"]),
+            texts,
+            "a column that comes back gets a number no column had"
+        );
         assert!(
-            !commit.dropped.iter().any(|dropped| dropped.name == texts),
-            "a texts dataset the table has again is not removed: {:?}",
+            commit.dropped.iter().any(|dropped| dropped.name == texts),
+            "the dataset of the column that went stays dropped: {:?}",
             commit.dropped
         );
         assert_eq!(

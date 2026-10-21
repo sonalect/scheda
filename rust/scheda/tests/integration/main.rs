@@ -5,6 +5,7 @@
 mod common;
 mod probe;
 
+mod budget;
 mod collections;
 mod consumer;
 mod documents;

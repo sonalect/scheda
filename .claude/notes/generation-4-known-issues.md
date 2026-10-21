@@ -30,7 +30,10 @@ Vault and a full learn instead of a migration.
    first.
 3. **The gate's `integration_test` takes about 90 s** (about 30 s before
    G1): find the slow G1/G2 tests and shorten them.
-4. **Slow measurements.** The owner allowed them (21 October 2026) for the
+4. **G3 check not yet covered:** a listing from an id prefix that stops
+   at the first id outside it reads only the trees on its way (count the
+   trees read).
+5. **Slow measurements.** The owner allowed them (21 October 2026) for the
    night, once every G stage is done, and not before: 100 000 writes at the pack
    level and through a Vault without a work tree (G2), the worst merge at
    the cap, reads with 1, 100, and 500 packs.

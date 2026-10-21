@@ -625,11 +625,15 @@ mod on_lance {
                     .filter_map(|entry| {
                         let dir = entry.unwrap().path();
                         let name = dir.file_name()?.to_str()?.to_owned();
-                        name.starts_with("g-").then_some(dir)
+                        name.starts_with('g').then_some(dir)
                     })
                     .flat_map(|generation| std::fs::read_dir(generation).unwrap())
                     .map(|entry| entry.unwrap().path())
-                    .filter(|dir| dir.to_string_lossy().ends_with(".texts.phrasings.lance"))
+                    .filter(|dir| {
+                        dir.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.contains('x'))
+                    })
                     .any(|dir| {
                         std::fs::read_dir(dir.join("_indices"))
                             .is_ok_and(|mut indices| indices.next().is_some())

@@ -1107,6 +1107,8 @@ impl Context {
                 .as_ref()
                 .map(|(generation, _)| generation::Retired::now(generation.name().to_owned()));
         }
+        #[cfg(test)]
+        hooks::before_state(&self.vault, || self.shared.signal.stopped()).await?;
         let root = self.index.root().to_path_buf();
         let state = commit.state().unwrap_or(to);
         blocking(move |cx| {
@@ -1425,6 +1427,10 @@ pub(crate) mod hooks {
         verdicts: usize,
         #[cfg(feature = "index")]
         looks: usize,
+        #[cfg(feature = "index")]
+        stop_before_state: bool,
+        #[cfg(feature = "index")]
+        stopped_before_state: bool,
     }
 
     static HOOKS: Mutex<Option<HashMap<PathBuf, Hook>>> = Mutex::new(None);
@@ -1510,6 +1516,47 @@ pub(crate) mod hooks {
         }) {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    /// The next round on `vault` that has made its Lance versions stops
+    /// there, before it writes the `commit` that names them, until the
+    /// indexer stops: the state a crash at that moment leaves.
+    #[cfg(feature = "index")]
+    pub(crate) fn stop_before_state(vault: &Path) {
+        with(vault, |hook| {
+            hook.stop_before_state = true;
+            hook.stopped_before_state = false;
+        });
+    }
+
+    /// Whether a round on `vault` waits at [`stop_before_state`].
+    #[cfg(feature = "index")]
+    pub(crate) fn stopped_before_state(vault: &Path) -> bool {
+        with(vault, |hook| hook.stopped_before_state)
+    }
+
+    /// Where [`stop_before_state`] stops a round; the round ends without
+    /// its `commit` once `stopped` says the indexer stops.
+    #[cfg(feature = "index")]
+    pub(crate) async fn before_state(
+        vault: &Path,
+        stopped: impl Fn() -> bool,
+    ) -> Result<(), Error> {
+        let armed = with(vault, |hook| {
+            let armed = std::mem::take(&mut hook.stop_before_state);
+            hook.stopped_before_state |= armed;
+            armed
+        });
+        if !armed {
+            return Ok(());
+        }
+        while !stopped() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        Err(Error::new(
+            protocontract::RuntimeCode::Cancelled,
+            "the indexer is stopping",
+        ))
     }
 
     /// A round at work; counted until dropped.
@@ -1883,7 +1930,12 @@ mod tests {
         let live: Option<PathBuf> = None;
         let left: Vec<PathBuf> = [
             index.root().to_path_buf(),
-            index.ids_file("log").parent().unwrap().to_path_buf(),
+            index
+                .ids_file("log")
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf(),
         ]
         .into_iter()
         .chain(live)

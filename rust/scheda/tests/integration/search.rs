@@ -1685,7 +1685,7 @@ pub(crate) mod on_lance {
             .map(|entries| {
                 entries
                     .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-                    .filter(|name| name.starts_with("g-"))
+                    .filter(|name| name.starts_with('g'))
                     .collect()
             })
             .unwrap_or_default()

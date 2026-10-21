@@ -141,7 +141,7 @@ async fn wait_indexed(path: &Path) {
 }
 
 fn map_file(path: &Path) -> PathBuf {
-    path.join(".scheda/index/journal/log/ids")
+    path.join(".scheda/index/journal/0/ids")
 }
 
 /// The ids the map of `log` lists, sorted.
@@ -187,7 +187,7 @@ fn a_write_is_indexed_and_the_map_lists_its_line() {
         assert_eq!(mapped(&path), ["one", "two"]);
         assert_eq!(
             std::fs::read_to_string(path.join(".scheda/index/format")).unwrap(),
-            "3\n"
+            "4\n"
         );
         assert_eq!(commits(&path), commits_before, "indexing commits nothing");
         assert_settled(&path, &[]);
@@ -362,9 +362,12 @@ fn an_index_of_another_format_or_without_a_commit_is_rebuilt() {
         wait_indexed(&path).await;
         vault.close(Empty::default()).await.unwrap();
         let index = path.join(".scheda/index");
-        for damage in ["another", "missing", "commit"] {
+        for damage in ["another", "previous", "missing", "commit"] {
             match damage {
                 "another" => std::fs::write(index.join("format"), "999\n").unwrap(),
+                // The format before the short names: its folders are named
+                // by the long scheme and must go, not be read.
+                "previous" => std::fs::write(index.join("format"), "3\n").unwrap(),
                 "missing" => std::fs::remove_file(index.join("format")).unwrap(),
                 _ => std::fs::remove_file(index.join("commit")).unwrap(),
             }
@@ -374,6 +377,9 @@ fn an_index_of_another_format_or_without_a_commit_is_rebuilt() {
             if reset {
                 std::fs::create_dir_all(index.join("lexical-of-the-past")).unwrap();
                 std::fs::write(index.join("lexical-of-the-past/segment"), "x").unwrap();
+                std::fs::create_dir_all(index.join("g-1a160b16700-3bda75-0/t0.files.lance"))
+                    .unwrap();
+                std::fs::create_dir_all(index.join("journal/log")).unwrap();
             }
             std::fs::remove_file(map_file(&path)).unwrap();
             let reopened = opened(&path).await;
@@ -381,13 +387,15 @@ fn an_index_of_another_format_or_without_a_commit_is_rebuilt() {
             // rest, so one seen after the rest is gone is the rebuild's own.
             wait_until(damage, || {
                 !index.join("lexical-of-the-past").exists()
+                    && !index.join("g-1a160b16700-3bda75-0").exists()
+                    && !index.join("journal/log").exists()
                     && map_file(&path).exists()
                     && is_indexed(&path)
             })
             .await;
             assert_eq!(
                 std::fs::read_to_string(index.join("format")).unwrap(),
-                "3\n"
+                "4\n"
             );
             assert_eq!(mapped(&path), ["one"], "{damage}");
             reopened.close(Empty::default()).await.unwrap();
