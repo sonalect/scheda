@@ -147,7 +147,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           set -euo pipefail
-          mkdir -p /c/b
+          mkdir -p /d/b
           # Git for Windows bash, for Bazel's shell actions and sh_test.
           echo "BAZEL_SH=C:/Program Files/Git/bin/bash.exe" >> "${GITHUB_ENV}"
           {
@@ -156,10 +156,13 @@ jobs:
             # cl.exe, which knows no long paths, joins a relative include to
             # it as it is written. zstd-sys's
             # `zstd\lib\dictBuilder\..\compress\zstd_compress_internal.h`
-            # comes to 257 characters on amd64 and 259 on arm64, the most
-            # MAX_PATH allows; an output base of its own hash directory
-            # (--output_user_root) adds 9.
-            echo "startup --output_base=C:/b"
+            # came to 257 characters before `.bazelrc` shortened the output
+            # directory, two short of MAX_PATH; an output base of its own
+            # hash directory (--output_user_root) adds 9. On D:, the
+            # runner's local disk, not C:, its system disk: there every
+            # flush waits, and a unit test of 400 writes took 56 s instead
+            # of 3 s.
+            echo "startup --output_base=D:/b"
             echo "startup --windows_enable_symlinks"
             echo "build --symlink_prefix=/"
           } >> "${HOME}/.bazelrc"
@@ -180,10 +183,18 @@ jobs:
       # The macOS and Windows runners take several times longer than Linux
       # over the volume suites (git, the file system), past the 300 s of a
       # small test: there each timeout is three times as long, so a run
-      # reports which test failed and why, not a timeout.
+      # reports which test failed and why, not a timeout. And a Rust test
+      # writes its output, the panic of a failed test included, as it
+      # runs: libtest prints captured output only after the whole suite,
+      # which a suite that still times out never reaches.
       - name: Lengthen the test timeouts
         if: runner.os != 'Linux'
-        run: echo "test --test_timeout=900,2700,8100,10800" >> "${HOME}/.bazelrc"
+        run: |
+          set -euo pipefail
+          {
+            echo "test --test_timeout=900,2700,8100,10800"
+            echo "test --test_env=RUST_TEST_NOCAPTURE=1"
+          } >> "${HOME}/.bazelrc"
 
       - name: Configure Bazel caches
         run: |

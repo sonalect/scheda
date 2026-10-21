@@ -148,9 +148,10 @@ The GitHub Actions workflow CI (started by hand) builds and tests on
 Linux, macOS, and Windows, each on amd64 and arm64: Bazel on five, Cargo on
 Windows arm64, where Bazel cannot build ring (its build script compiles
 with clang there and gets the cl.exe flags of Bazel's C++ toolchain). On
-Windows, Bazel needs a short output base: cl.exe knows no long paths, and
-the C sources of zstd and libgit2 come to the 259 characters of `MAX_PATH`
-under `C:/b`. Put `startup --output_base=C:/b` in your own `.bazelrc`.
+Windows, Bazel needs a short output base: cl.exe and link.exe know no long
+paths, and the C sources of zstd and libgit2 come close to the 259
+characters of `MAX_PATH` under `C:/b`. Put `startup --output_base=C:/b` in
+your own `.bazelrc` (CI uses `D:/b`, the runner's faster disk).
 The third-party crates build with optimizations in every mode, the
 workspace's own crates as the mode says.
 

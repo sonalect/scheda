@@ -9,6 +9,15 @@ rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 
 # Host CRT on every OS.
 rust.toolchain(
+    # Short names for the Windows toolchains' repositories, in place of the
+    # hashed `rw-<hash>` rules_rust gives them. A doc test links the
+    # standard library through the runfiles of its runner, and link.exe
+    # reads no path past MAX_PATH: under the hashed name the path of
+    # `librustc_std_workspace_alloc-<hash>.rlib` was 270 characters.
+    aliases = {
+        "rust_windows_aarch64__aarch64-pc-windows-msvc__stable": "rwa",
+        "rust_windows_x86_64__x86_64-pc-windows-msvc__stable": "rwx",
+    },
     edition = RUST_EDITION,
     # Every archive of the toolchain on the six hosts, with the sha256 that
     # static.rust-lang.org publishes beside it (`<archive>.sha256`):

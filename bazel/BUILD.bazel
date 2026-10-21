@@ -40,3 +40,10 @@ protoc_prefix(
         "@protobuf//:well_known_type_protos",
     ],
 )
+
+# The host under a short name: on Windows (`.bazelrc`) the output directory
+# is `bazel-out/w-fastbuild`, not `bazel-out/x64_windows-fastbuild`.
+platform(
+    name = "host",
+    parents = ["@platforms//host"],
+)

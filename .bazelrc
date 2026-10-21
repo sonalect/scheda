@@ -29,6 +29,13 @@ common --@rules_rust//rust/settings:per_crate_rustc_flag=external/rules_rust++cr
 # flag, and /Od /Z7 for C, which here only the build scripts of crates
 # compile.
 build:windows --features=-fastbuild
+# cl.exe and link.exe read no path past MAX_PATH (260), long paths enabled
+# or not. On Windows the target platform is the host under a short name
+# (`//bazel:host`), so outputs go to `bazel-out/w-fastbuild` instead of
+# `bazel-out/x64_windows-fastbuild`: zstd-sys's C sources came within two
+# characters of the limit, and a doc test's standard library past it.
+common:windows --platforms=//bazel:host
+common:windows --experimental_override_name_platform_in_output_dir=//bazel:host=w
 # Nothing in the build compiles protoc or the protobuf C++ library: a target
 # that reaches `@protobuf//:protoc` or a C++ compile of module `protobuf`
 # fails its build (`bazel/no_protobuf_source.bzl`).

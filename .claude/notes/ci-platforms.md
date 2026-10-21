@@ -64,6 +64,27 @@ its release workflow. Manual runs only (`workflow_dispatch`).
   which gives the plain form when one exists (the owner's decision, 21
   October 2026).
 
+- Windows `MAX_PATH` (cl.exe and link.exe are not long-path aware, though
+  the runners set `LongPathsEnabled`): `blocking_doc_test` failed with
+  LNK1181 because the path of `librustc_std_workspace_alloc-*.rlib` under
+  the runner's runfiles was 270 characters. `.bazelrc` builds for
+  `//bazel:host` named `w` (`bazel-out/w-fastbuild`, 10 shorter), and
+  `rust.toolchain(aliases=...)` names the Windows toolchain repositories
+  `rwx`/`rwa` instead of `rw-<hash>` (10 shorter): 250 now.
+- Disk on the Windows runners: windows-2025 has C: (system disk, slow
+  flushes) and D: (local). Bazel's output base is `D:/b` in CI. Probe, one
+  test alone: `pack::tests::many_appends_…` 9 s on C:, 3 s on D:;
+  `reads::tests::the_first_version_of_a_long_history_…` 56 s on C:, 3 s on
+  D:. windows-11-arm has only C:.
+- `reads::tests::the_first_document_of_a_big_collection_…` wrote 100 000
+  files and `git add`ed them: alone over 600 s on windows-arm64, 134 s on
+  macOS arm64 (RAM disk or not), 2–4 s locally; running in two suites at
+  once it slowed every test beside it (the `pack::` tests, 2 s alone on
+  macOS, took minutes inside the suite). The fixture now builds the
+  commit in memory and writes it as one pack (libgit2 mempack): 1 s
+  locally. `git fast-import` was no help: it inserts tree entries by a
+  linear search, 16 s of CPU for 100 000 entries in one folder.
+
 ## Measurements
 
 Four local cores (`taskset -c 0-3`), Bazel build, one test alone:
@@ -92,15 +113,13 @@ writes `BIG = 100_000` files and commits them with git.
 
 - On windows-amd64 under Bazel the `mirror::` integration tests fail, which
   pass under Cargo on windows-arm64: the suite times out before libtest
-  prints why.
+  prints why. CI now sets `RUST_TEST_NOCAPTURE=1` on macOS and Windows, so
+  a panic is in the log even when its suite times out.
 - The CLI does not link with Cargo on Windows: esaxx-rs (tokenizers, from
   model2vec-rs, both of its tokenizer features) builds with
   `.static_crt(true)`, `/MT`, against `/MD` of mimalloc and the rest
   (LNK2038). Bazel links it only because the toolchain's `/MD` comes after
   esaxx's `/MT` in the compile line.
-- `rust_doc_test` of rules_rust (the legacy runner; the compiled one needs
-  a nightly toolchain) does not link doc tests on Windows: LNK1181 on a
-  relative sysroot path (`//rust/blocking:blocking_doc_test`).
 - macOS and Windows run the volume tests many times slower than Linux:
   `scheda_thin_test` and `integration_test` time out at 300 s on macOS,
   every Rust suite on windows-amd64; the Cargo unit tests take 1002 s on

@@ -28,8 +28,10 @@ API or on-disk format changes bump the minor.
   compiles with clang, and `rules_rust` hands every build script the
   cl.exe flags of the C++ toolchain, which clang cannot read. macOS keeps
   the test files on a RAM disk, as Linux keeps them on tmpfs; Windows
-  uses the output base `C:/b`, the shortest that keeps the C sources of
-  zstd and libgit2 under `MAX_PATH`. It still starts by hand
+  uses the output base `D:/b`, the shortest that keeps the C sources of
+  zstd and libgit2 under `MAX_PATH`, on the runner's local disk (on `C:`,
+  its system disk, every flush waits: a unit test of 400 writes took 56 s
+  there and 3 s on `D:`). It still starts by hand
   (`workflow_dispatch`); only a run on `main` saves the Bazel caches.
 - The third-party crates build with optimizations (`opt-level = 2`) in
   every build of this repository, Bazel's `fastbuild` and Cargo's `dev`
@@ -47,6 +49,15 @@ API or on-disk format changes bump the minor.
   the flag and warned (LNK4315) on every link.
 - The Rust toolchain archives Bazel downloads are checked against the
   sha256 that static.rust-lang.org publishes for each, on the six hosts.
+- On Windows, Bazel builds for the host under a short platform name
+  (`//bazel:host`), into `bazel-out/w-fastbuild` instead of
+  `bazel-out/x64_windows-fastbuild`, and the repositories of the Windows
+  Rust toolchains are named `rwx` and `rwa` instead of `rw-<hash>`.
+  cl.exe and link.exe read no path longer than `MAX_PATH`: the doc tests
+  of `//rust/blocking:blocking_doc_test` did not link (LNK1181, the path
+  of a standard library file under the runner's runfiles was 270
+  characters), and the C sources of zstd were two characters short of
+  the limit.
 
 ### Fixed
 
