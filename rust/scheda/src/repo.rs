@@ -847,6 +847,9 @@ pub(crate) struct Delta {
     /// The entry at `path` in the later commit, as the comparison of the
     /// two trees gave it; `None` when the later commit lacks the file.
     pub(crate) node: Option<Node>,
+    /// The blob at `path` in the earlier commit when the later commit lacks
+    /// the file, as the same comparison gave it.
+    pub(crate) gone: Option<Oid>,
 }
 
 impl Delta {
@@ -1192,6 +1195,7 @@ impl Snap {
             out.push(Delta {
                 path: self.outer(path),
                 node: (!deleted).then(|| Node::of_mode(file.id(), i32::from(file.mode()))),
+                gone: deleted.then(|| file.id()),
             });
         }
         Ok(Some(out))

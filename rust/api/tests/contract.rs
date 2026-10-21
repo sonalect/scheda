@@ -79,15 +79,15 @@ fn bridges_exist() {
 }
 
 #[test]
-fn marker_is_generation_three() {
+fn marker_is_generation_four() {
     let mut marker = VaultMarker::default();
     assert!(marker.validate().is_err(), "a marker without a generation");
-    marker.version = Some(1);
-    assert!(marker.validate().is_err(), "generation 1");
-    marker.version = Some(2);
-    assert!(marker.validate().is_err(), "generation 2");
-    marker.version = Some(3);
-    assert!(marker.validate().is_ok(), "generation 3");
+    for older in 1..=3 {
+        marker.version = Some(older);
+        assert!(marker.validate().is_err(), "generation {older}");
+    }
+    marker.version = Some(4);
+    assert!(marker.validate().is_ok(), "generation 4");
 }
 
 /// An embedder that answers nothing a test asks of it.

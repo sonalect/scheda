@@ -28,7 +28,7 @@ async fn opened(path: &Path) -> DynVaultAsync {
 fn assert_marked(path: &Path) {
     assert_eq!(
         std::fs::read_to_string(path.join(".scheda.yaml")).unwrap(),
-        "version: 3\n"
+        "version: 4\n"
     );
     let ignore = std::fs::read_to_string(path.join(".gitignore")).unwrap();
     assert!(ignore.lines().any(|line| line == ".scheda/"), "{ignore}");

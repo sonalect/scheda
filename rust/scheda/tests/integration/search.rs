@@ -1794,6 +1794,74 @@ pub(crate) mod on_lance {
             .collect()
     }
 
+    #[test]
+    fn a_move_by_the_layout_embeds_and_projects_nothing_again() {
+        both(|| async {
+            let fx = Fixture::new("search-layout-move").await;
+            let notes = fx.collection("notes").await;
+            // Each topic is its own text: equal texts embed once.
+            let distinct = |from: usize, count: usize| {
+                stream_of(
+                    (from..from + count)
+                        .map(|n| DocumentOperation {
+                            operation: Some(Operation::Upsert(Box::new(
+                                DocumentUpsert::default()
+                                    .with_id(format!("k{n:06}"))
+                                    .with_raw(
+                                        json!({"title": format!("kitten {n}"), "topic": format!("cat kitten {n}")})
+                                            .to_string()
+                                            .into_bytes(),
+                                    )
+                                    .with_note("test"),
+                            ))),
+                            ..DocumentOperation::default()
+                        })
+                        .collect(),
+                )
+            };
+            notes.batch(distinct(0, 64)).await.unwrap();
+            wait_indexed(&fx.vault).await;
+            assert_eq!(fx.calls.embedded.load(Ordering::SeqCst), 64);
+            let embedded = fx.calls.embedded.load(Ordering::SeqCst);
+            let projected = fx.calls.projected.load(Ordering::SeqCst);
+
+            // The 65th Document splits the folder: 64 files move.
+            notes.batch(distinct(64, 1)).await.unwrap();
+            wait_indexed(&fx.vault).await;
+            assert_eq!(
+                fx.calls.embedded.load(Ordering::SeqCst) - embedded,
+                1,
+                "only the new Document is embedded"
+            );
+            assert_eq!(
+                fx.calls.projected.load(Ordering::SeqCst) - projected,
+                1,
+                "only the new Document is projected"
+            );
+            assert_eq!(count(&notes).await, 65);
+
+            // Removing one merges the folder back flat: nothing again.
+            let embedded = fx.calls.embedded.load(Ordering::SeqCst);
+            let projected = fx.calls.projected.load(Ordering::SeqCst);
+            notes
+                .delete(
+                    DocumentDeletion::default()
+                        .with_id("k000064")
+                        .with_note("t"),
+                )
+                .await
+                .unwrap();
+            wait_indexed(&fx.vault).await;
+            assert_eq!(fx.calls.embedded.load(Ordering::SeqCst), embedded);
+            assert_eq!(fx.calls.projected.load(Ordering::SeqCst), projected);
+            assert_eq!(count(&notes).await, 64);
+
+            let found = run(&notes, json!({"text": "kitten 7", "k": 3})).await;
+            assert!(!ids(&found).is_empty(), "the moved Documents are found");
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
     /// The child of the kill test. With `after` 0, it writes Documents in
     /// batches until it is killed, while its indexer writes them into the
     /// Index. Otherwise it writes 600 Documents at once and holds the

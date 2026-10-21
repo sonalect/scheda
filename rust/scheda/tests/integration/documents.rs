@@ -1275,7 +1275,7 @@ fn a_document_committed_by_a_person_is_read_replaced_and_deleted() {
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 3\n"),
+                (".scheda.yaml", "version: 4\n"),
                 (
                     "notes/.collection.yaml",
                     "name: notes\nschema:\n  standard: {}\n",
@@ -2808,7 +2808,7 @@ fn a_vault_without_a_work_tree_writes_no_file_no_index_and_no_reflog() {
         let head = git_out(&path, &["log", "-1", "--format=%s"]);
         assert!(!head.is_empty());
         assert_eq!(git_out(&path, &["show", "HEAD:notes/b07.md"]), "x");
-        assert_eq!(git_out(&path, &["show", "HEAD:.scheda.yaml"]), "version: 3");
+        assert_eq!(git_out(&path, &["show", "HEAD:.scheda.yaml"]), "version: 4");
         assert_eq!(
             git_out(
                 &path.join(".isolated"),

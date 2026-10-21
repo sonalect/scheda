@@ -103,7 +103,7 @@ fn field_options(src: &str) -> String {
 }
 
 /// The format generation the `int32 version` of `VaultMarker` must be.
-const GENERATION: u32 = 3;
+const GENERATION: u32 = 4;
 
 fn has_int32_const_generation(options: &str) -> bool {
     let compact: String = options.chars().filter(|c| !c.is_whitespace()).collect();

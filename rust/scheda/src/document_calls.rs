@@ -703,18 +703,15 @@ impl crate::vault::Vault {
             changes = with_ignore;
         }
         let before = snap.commit();
-        // The Documents of a standard collection are laid out by the rule
-        // of the layout; journals, singletons, and the collections of the
-        // nested repository keep their paths.
-        let laid: Vec<String> = if repo == Repo::Main {
-            declarations
-                .iter()
-                .filter(|decl| decl.kind() == Kind::Standard && !decl.isolated())
-                .map(|decl| isolated::vault_rel(decl, ""))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        // The Documents of a standard collection and the segments of a
+        // journal are laid out by the rule of the layout, in the repository
+        // of the collection; singletons keep their paths.
+        let laid: Vec<String> = declarations
+            .iter()
+            .filter(|decl| matches!(decl.kind(), Kind::Standard | Kind::Journal))
+            .filter(|decl| decl.repo() == repo)
+            .map(|decl| isolated::vault_rel(decl, ""))
+            .collect();
         let head = lock.commit_laid(&snap, &message(&first_note, &trailers), &changes, &laid)?;
         let pushable = repo == Repo::Main && head != before;
         if repo == Repo::Main {
@@ -866,6 +863,8 @@ struct JournalState<'a> {
     appended: HashSet<String>,
     /// The whole new bytes of each segment appended to, by path.
     pending: BTreeMap<PathBuf, Vec<u8>>,
+    /// The folder of the journal, Vault-relative, ending in `/`.
+    dir: String,
 }
 
 /// The state of a write call under the lock: the files it touches, as the
@@ -947,6 +946,7 @@ impl<'a> Ledger<'a> {
                 stored: self.id_maps.lookup(self.snap, decl),
                 appended: HashSet::new(),
                 pending: BTreeMap::new(),
+                dir: isolated::vault_rel(decl, ""),
             }),
         };
         let existing = if state.appended.contains(&step.id) {
@@ -1154,7 +1154,14 @@ impl<'a> Ledger<'a> {
         }
         for state in self.journals.into_values() {
             for (path, bytes) in state.pending {
-                changes.push(Change::put(journal::rel_str(&path), bytes));
+                // A segment is named by its place in the folder of the
+                // journal, not by the layout folders it sits in now: the
+                // commit puts it where the layout wants it.
+                let rel = journal::rel_str(&path);
+                let name = rel
+                    .strip_prefix(&state.dir)
+                    .map_or_else(|| rel.clone(), crate::layout::id_of);
+                changes.push(Change::put(format!("{}{name}", state.dir), bytes));
             }
         }
         Ok(changes)

@@ -603,7 +603,7 @@ schema:
 
     #[test]
     fn a_broken_rule_is_invalid_argument_and_names_the_field() {
-        let fault = read::<VaultMarker>(b"version: 4\n", Format::Yaml).unwrap_err();
+        let fault = read::<VaultMarker>(b"version: 3\n", Format::Yaml).unwrap_err();
         assert!(fault.message().contains("version"), "{}", fault.message());
         assert!(code(fault).is(VaultErrorCode::InvalidArgument));
         let error = code(read::<CollectionDeclaration>(b"name: ''\n", Format::Yaml).unwrap_err());

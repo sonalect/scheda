@@ -1,6 +1,6 @@
 //! The Vault marker: `{vault}/.scheda.yaml`, committed to git.
 //!
-//! The file is the YAML of `VaultMarker` and holds `version: 3`, the
+//! The file is the YAML of `VaultMarker` and holds `version: 4`, the
 //! generation of the Vault format. It is tracked, so a clone carries it;
 //! `.scheda/` is gitignored and does not. A git work tree that holds it is
 //! a Vault.
@@ -21,7 +21,7 @@ use crate::stored::{self, Format, Stored, Unknowns};
 pub(crate) const FILE: &str = ".scheda.yaml";
 
 /// The format generation this build reads and writes.
-pub(crate) const GENERATION: i32 = 3;
+pub(crate) const GENERATION: i32 = 4;
 
 /// The marker held by the commit of `snap`, or `None` when the commit has
 /// no such file (an unborn branch included).
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn the_marker_made_is_accepted_and_is_of_this_generation() {
         let bytes = make().unwrap();
-        assert_eq!(bytes, b"version: 3\n");
+        assert_eq!(bytes, b"version: 4\n");
         let stored = parse(&bytes).unwrap();
         assert_eq!(stored.message.version, Some(GENERATION));
         assert!(stored.unknown.is_empty());
@@ -96,7 +96,8 @@ mod tests {
         for text in [
             "version: 1\n",
             "version: 2\n",
-            "version: 4\n",
+            "version: 3\n",
+            "version: 5\n",
             "version: 0\n",
             "version: 2.5\n",
         ] {
@@ -112,7 +113,7 @@ mod tests {
 
     #[test]
     fn an_unknown_key_is_read_past() {
-        let stored = parse(b"version: 3\nname: x\nlater:\n  a: 1\n").unwrap();
+        let stored = parse(b"version: 4\nname: x\nlater:\n  a: 1\n").unwrap();
         let paths: Vec<String> = stored
             .unknown
             .iter()
@@ -155,7 +156,7 @@ mod tests {
         assert!(error.is(VaultErrorCode::Generation));
         let fault = error.downcast_ref::<crate::error::Fault>().unwrap();
         assert_eq!(fault.path(), Some(FILE));
-        std::fs::write(dir.join(FILE), b"version: 3\n").unwrap();
+        std::fs::write(dir.join(FILE), b"version: 4\n").unwrap();
         fixture::commit_all(&dir);
         assert!(read(&fixture::snap(&dir)).unwrap().is_some());
         let _ = std::fs::remove_dir_all(&dir);

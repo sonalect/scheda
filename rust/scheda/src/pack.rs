@@ -2511,7 +2511,9 @@ pub(crate) mod tests {
             crate::testing::create(&vault, "notes", note(n))
                 .await
                 .unwrap();
-            most = most.max(below_cap(&root));
+            // Counted with the task stopped: while a merge of the task
+            // removes the packs it replaced, its new pack is there beside
+            // them for a moment.
             vault.close().await.unwrap();
             most = most.max(below_cap(&root));
         }

@@ -1162,7 +1162,7 @@ mod tests {
             let _ = std::fs::remove_dir_all(&dir);
             crate::testing::remove_when_the_test_ends(&dir);
             std::fs::create_dir_all(dir.join("notes")).unwrap();
-            std::fs::write(dir.join(".scheda.yaml"), "version: 3\nfuture: 1\n").unwrap();
+            std::fs::write(dir.join(".scheda.yaml"), "version: 4\nfuture: 1\n").unwrap();
             std::fs::write(
                 dir.join("notes/.collection.yaml"),
                 "name: notes\nschema:\n  standard: {}\n",

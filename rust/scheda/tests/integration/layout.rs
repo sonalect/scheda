@@ -19,13 +19,13 @@ use serde_json::json;
 
 use crate::common::{Scratch, all, both, collection, open, work_tree, write};
 
-/// A Vault of generation 3 at `path` with the collection `notes` and
+/// A Vault of generation 4 at `path` with the collection `notes` and
 /// nothing else, committed.
 fn empty_vault(path: &Path) {
     work_tree(
         path,
         &[
-            (".scheda.yaml", "version: 3\n"),
+            (".scheda.yaml", "version: 4\n"),
             (
                 "notes/.collection.yaml",
                 "name: notes\nschema:\n  standard: {}\n",
@@ -670,5 +670,142 @@ fn one_write_makes_a_collection_split_by_hand_canonical() {
         assert_eq!(on_disk(&path, "notes"), files, "the files follow the tree");
         get_all(&notes, &ids).await;
         crate::probe::assert_settled(&path, &[]);
+    });
+}
+
+#[test]
+fn an_isolated_collection_of_65_documents_is_split_canonically_in_its_repository_and_a_removal_merges_it()
+ {
+    both(|| async {
+        let scratch = Scratch::new("layout-isolated");
+        let path = scratch.join("vault");
+        let vault = open(&path, OpenOptions::default()).await.unwrap();
+        let declaration: CollectionDeclaration = serde_json::from_value(
+            json!({"name": "notes", "schema": {"standard": {}, "isolated": true}}),
+        )
+        .unwrap();
+        vault.create_collection(declaration).await.unwrap();
+        let notes = collection(&vault, "notes").await.unwrap();
+        let nested = path.join(".isolated");
+        let mut ids = numbered_ids(64);
+        for id in &ids {
+            put(&notes, id).await;
+        }
+        let (_, files) = physical(&nested, "notes");
+        assert_eq!(files, ids, "64 Documents are flat");
+
+        put(&notes, "n064.md").await;
+        ids.insert("n064.md".to_owned());
+        let (_, files) = physical(&nested, "notes");
+        assert_eq!(files, canonical(&ids), "the 65th splits the folder");
+        assert!(files.iter().all(|file| file.starts_with('_')), "{files:?}");
+        assert_eq!(on_disk(&path, ".isolated/notes"), files, "the work tree");
+        get_all(&notes, &ids).await;
+
+        remove(&notes, "n010.md").await;
+        ids.remove("n010.md");
+        let (_, files) = physical(&nested, "notes");
+        assert_eq!(files, ids, "64 again, flat");
+        assert_eq!(on_disk(&path, ".isolated/notes"), files, "the work tree");
+        get_all(&notes, &ids).await;
+        let error = notes.get(key("n010.md")).await.unwrap_err();
+        assert!(error.is(Code::NotFound));
+        vault.close(Empty::default()).await.unwrap();
+    });
+}
+
+/// Creates `ids` in `notes` in one batch.
+async fn batch_create(vault: &DynVaultAsync, ids: &BTreeSet<String>) {
+    let operations: Vec<Result<VaultDocumentOperation, scheda::Error>> = ids
+        .iter()
+        .map(|id| {
+            Ok(VaultDocumentOperation {
+                collection: Some("notes".to_owned()),
+                operation: DocumentOperation {
+                    operation: Some(Operation::Create(Box::new(
+                        DocumentCreation::default()
+                            .with_id(id.as_str())
+                            .with_raw(body(id))
+                            .with_note("n"),
+                    ))),
+                    ..Default::default()
+                }
+                .into(),
+                ..Default::default()
+            })
+        })
+        .collect();
+    vault
+        .batch_documents(IterStream::new(operations.into_iter()))
+        .await
+        .unwrap();
+}
+
+/// The (code, path) of every problem `Check` finds in the Vault at `path`.
+async fn problems_of(path: &Path) -> Vec<(Option<Code>, Option<String>)> {
+    let vault = open(path, OpenOptions::default()).await.unwrap();
+    let report = vault.check(Empty::default()).await.unwrap();
+    vault.close(Empty::default()).await.unwrap();
+    report
+        .problems
+        .iter()
+        .map(|problem| {
+            (
+                problem.code.and_then(|code| code.as_known()),
+                problem.path.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn check_is_clean_on_a_vault_of_200_documents_written_by_this_version() {
+    both(|| async {
+        let scratch = Scratch::new("layout-check-clean");
+        let path = scratch.join("vault");
+        let vault = new_vault(&path, OpenOptions::default()).await;
+        batch_create(&vault, &numbered_ids(200)).await;
+        let report = vault.check(Empty::default()).await.unwrap();
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+        vault.close(Empty::default()).await.unwrap();
+    });
+}
+
+#[test]
+fn check_reports_a_document_in_the_wrong_layout_folder_with_its_path() {
+    both(|| async {
+        let scratch = Scratch::new("layout-check-wrong");
+        let path = scratch.join("vault");
+        empty_vault(&path);
+        write(&path, "notes/a.md", "a");
+        write(&path, "notes/c.md", "c");
+        write(&path, "notes/_62/b.md", "b");
+        commit_by_hand(&path);
+        let found = problems_of(&path).await;
+        assert!(
+            found.contains(&(
+                Some(Code::InvalidArgument),
+                Some("notes/_62/b.md".to_owned())
+            )),
+            "{found:?}"
+        );
+    });
+}
+
+#[test]
+fn check_reports_a_flat_folder_of_70_documents_with_the_path_of_the_folder() {
+    both(|| async {
+        let scratch = Scratch::new("layout-check-flat");
+        let path = scratch.join("vault");
+        empty_vault(&path);
+        for n in 0..70 {
+            write(&path, &format!("notes/f{n:02}.md"), "x");
+        }
+        commit_by_hand(&path);
+        let found = problems_of(&path).await;
+        assert!(
+            found.contains(&(Some(Code::InvalidArgument), Some("notes".to_owned()))),
+            "{found:?}"
+        );
     });
 }

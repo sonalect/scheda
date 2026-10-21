@@ -199,12 +199,18 @@ impl Vault {
         let mem = overlay.repo();
         let ours_commit = mem.find_commit(ours).map_err(lib_fault)?;
         let theirs_commit = mem.find_commit(theirs).map_err(lib_fault)?;
-        // The Documents of standard collections are joined by id and laid
-        // out by the rule, so both clones end with the same tree.
+        // The Documents of standard collections and the segments of
+        // journals are joined by id and laid out by the rule, so both
+        // clones end with the same tree.
         let laid: Vec<String> = self
             .declarations_in(&snap)?
             .iter()
-            .filter(|decl| decl.kind() == collection::Kind::Standard && !decl.isolated())
+            .filter(|decl| {
+                matches!(
+                    decl.kind(),
+                    collection::Kind::Standard | collection::Kind::Journal
+                ) && !decl.isolated()
+            })
             .map(|decl| isolated::vault_rel(decl, ""))
             .collect();
         let (tree, paths) =

@@ -18,8 +18,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod audit;
 mod edit;
 mod write;
+
+pub(crate) use audit::check_layout;
 
 pub(crate) use write::{Entry, Moved, Op, apply, moved};
 

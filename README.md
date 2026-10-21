@@ -17,7 +17,7 @@ queries and searches come from a caller **Projector** passed when the Vault
 is opened. The library does not know a consumer's types or file format.
 The **Index** is derived (it is built on Lance), lives under
 `{vault}/.scheda/` (gitignored), and can be deleted and rebuilt from files. A folder is a Vault when it is a git
-working tree with the committed marker file `.scheda.yaml` (`version: 3`,
+working tree with the committed marker file `.scheda.yaml` (`version: 4`,
 the generation); `Scheda.Open` with the default mode creates a missing
 Vault, and adds the marker in one commit to a git working tree that lacks
 it, unless `OpenOptions.mode` asks to open an existing Vault only

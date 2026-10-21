@@ -42,15 +42,18 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
-- The folder of a standard collection holds at most 64 entries. A folder of
-  more than 64 entries (Document files and id folders) is split into
+- The folder of a standard collection and the segment folder of a journal
+  hold at most 64 entries, in the Vault's repository and in `.isolated/`
+  alike. A folder of
+  more than 64 entries (Document files, segment files, and id folders) is split into
   folders named `_<hex>` by the bytes of the ids, only where the ids are
   dense; below 65 it is flat again. The same Documents always give the same
   tree, whatever order or clone wrote them, so a write costs the same at a
   million Documents as at a hundred, and two clones that wrote different
   Documents join into one tree. A write and a batch lay out the folders on
   the paths of their ids, and a pull joins the Documents of standard
-  collections by id. A read finds a Document whatever the layout: flat, in
+  collections and the segments of journals by id. The id map of a journal
+  follows a segment the layout moved. A read finds a Document whatever the layout: flat, in
   `_<hex>` folders, or in a tree made by hand. In a Vault with files, the
   files move with the layout. A folder made by hand that does not follow
   the rule is made canonical by the next write that touches it. `History`
@@ -80,7 +83,9 @@ API or on-disk format changes bump the minor.
   merge leaves what a killed one leaves (every object readable, nothing
   lost), and the merge runs again after the next open. A background merge
   that fails is not reported; the bound below surfaces a failure that lasts.
-- The packs below the cap number fewer than 32 at every moment. A write, a
+- The packs below the cap number fewer than 32 whenever no merge is
+  replacing packs (a merge keeps its new pack beside the ones it replaces
+  until it has removed them). A write, a
   batch, and the join of a pull that would leave 32 merge first, under
   `.scheda/pack.lock` (they wait for a merge of the task that holds it),
   until fewer remain, and then write. When that merge fails, the write
@@ -99,8 +104,16 @@ API or on-disk format changes bump the minor.
   "object not found" for an object the Vault holds: the git library looks
   at the folder of packs once after a miss, and could see the old pack
   there and find it gone when it opened it.
-- A Vault of `0.25` opens as it is: the format on disk is the one git
-  reads, and the packs of the old kind are merged like any other.
+- The marker `.scheda.yaml` of a Vault is `version: 4`. A Vault of
+  generation 3 (`0.25` and before) is refused with `GENERATION` in every
+  open mode, and nothing is written to it. The library does not move it:
+  start a new Vault and write its Documents again, or use the
+  command-line move that comes later.
+- `Check` reports a Document file or an id folder that is not where the
+  canonical layout of its folder puts it, and a folder past its bound (more
+  than 64 entries in a flat folder, or a split folder that would fit one
+  flat folder), as `INVALID_ARGUMENT` with the path. A Vault written by this
+  version is clean.
 
 ### Fixed
 

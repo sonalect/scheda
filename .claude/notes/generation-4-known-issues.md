@@ -46,6 +46,10 @@ Vault and a full learn instead of a migration.
 - Syncs counted with `strace` (22 October 2026): with a work tree a write
   13 at any depth; without one a write 6 at any depth and a batch of 500
   Documents 6.
+- The bound of 32 packs holds whenever no merge is replacing packs: a
+  merge keeps its new pack beside the ones it replaces until it has
+  removed them, so for that moment there is one more. The D8 amendment in
+  docs/24 says "at every moment": correct it.
 
 ## Known issues (races under load)
 

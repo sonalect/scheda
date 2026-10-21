@@ -605,12 +605,22 @@ impl WriteLock<'_> {
         // A Vault without a work tree has no file to settle and no index.
         if !no_files {
             let mut plan = plan_of(snap, changes, &blobs, laid)?;
+            // A file the layout wrote that this write put holds its bytes
+            // already: they are not read back from the repository.
+            let held: BTreeMap<Oid, &[u8]> = changes
+                .iter()
+                .zip(&blobs)
+                .filter_map(|(change, blob)| match (change, blob) {
+                    (Change::Put { bytes, .. }, Some(id)) => Some((*id, bytes.as_ref())),
+                    _ => None,
+                })
+                .collect();
             plan.extend(moved.iter().map(|file| Item {
                 rel: &file.path,
                 want: file.want.map(|(id, executable)| Want {
                     id,
                     mode: FileMode::of(executable),
-                    bytes: None,
+                    bytes: held.get(&id).copied(),
                 }),
                 was: file.was,
             }));
@@ -1924,7 +1934,7 @@ mod tests {
         vault.close().await.unwrap();
         // A person's edits: one of a listed path, one of another.
         std::fs::write(scratch.0.join(".gitignore"), "edited\n").unwrap();
-        std::fs::write(scratch.0.join(".scheda.yaml"), "version: 3\n# edited\n").unwrap();
+        std::fs::write(scratch.0.join(".scheda.yaml"), "version: 4\n# edited\n").unwrap();
         std::fs::create_dir_all(scratch.0.join("dir")).unwrap();
         std::fs::write(scratch.0.join("dir/ghost.txt"), "not in HEAD").unwrap();
         std::fs::write(scratch.0.join("kept.txt"), "kept").unwrap();

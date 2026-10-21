@@ -133,7 +133,7 @@ fn create_new_refuses_a_vault_and_the_other_modes_open_it() {
 #[test]
 fn another_generation_is_generation_in_every_mode_and_before_any_collection_file() {
     both(|| async {
-        for version in ["1", "2", "4"] {
+        for version in ["1", "2", "3", "5"] {
             let scratch = Scratch::new("generation");
             let path = scratch.join("old");
             work_tree(
@@ -165,7 +165,7 @@ fn an_unknown_key_in_the_marker_and_a_leftover_version_in_a_collection_file_open
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 3\nsomething: later\n"),
+                (".scheda.yaml", "version: 4\nsomething: later\n"),
                 (
                     "notes/.collection.yaml",
                     "version: 1\nname: notes\nschema:\n  standard: {}\n",
@@ -204,7 +204,7 @@ fn an_invalid_collection_file_fails_open_and_writes_nothing() {
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 3\n"),
+                (".scheda.yaml", "version: 4\n"),
                 (
                     "notes/.collection.yaml",
                     "name: notes\nschema:\n  document: {}\n",
@@ -328,5 +328,98 @@ fn a_repository_the_library_cannot_read_is_unimplemented_in_every_mode() {
                 refused(&path, mode, Code::Unimplemented).await;
             }
         }
+    });
+}
+
+/// Every file and folder below `dir` with its size and modification time,
+/// the git directory included: what a refusal must not touch.
+fn listing(dir: &std::path::Path) -> Vec<(String, u64, std::time::SystemTime)> {
+    fn walk(
+        base: &std::path::Path,
+        at: &std::path::Path,
+        out: &mut Vec<(String, u64, std::time::SystemTime)>,
+    ) {
+        let mut entries: Vec<_> = std::fs::read_dir(at)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        entries.sort();
+        for path in entries {
+            let meta = std::fs::symlink_metadata(&path).unwrap();
+            let rel = path
+                .strip_prefix(base)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            out.push((rel, meta.len(), meta.modified().unwrap()));
+            if meta.is_dir() {
+                walk(base, &path, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+#[test]
+fn a_new_vault_marker_says_version_4() {
+    both(|| async {
+        let scratch = Scratch::new("marker-four");
+        let path = scratch.join("vault");
+        open(&path, OpenOptions::default())
+            .await
+            .unwrap()
+            .close(Empty::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path.join(".scheda.yaml")).unwrap(),
+            "version: 4\n"
+        );
+        assert_eq!(
+            crate::common::command(&path, &["show", "HEAD:.scheda.yaml"])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+                .unwrap(),
+            "version: 4\n"
+        );
+    });
+}
+
+#[test]
+fn a_vault_whose_marker_says_3_is_generation_in_every_open_mode_and_nothing_changes() {
+    both(|| async {
+        let scratch = Scratch::new("marker-three");
+        let path = scratch.join("vault");
+        work_tree(
+            &path,
+            &[
+                (".scheda.yaml", "version: 3\n"),
+                (
+                    "notes/.collection.yaml",
+                    "name: notes\nschema:\n  standard: {}\n",
+                ),
+                ("notes/a.md", "one"),
+            ],
+        );
+        let before = listing(&path);
+        let bytes = snapshot(&path);
+        for mode in [
+            OpenMode::OPEN_MODE_OPEN_EXISTING,
+            OpenMode::OPEN_MODE_OPEN_OR_CREATE,
+            OpenMode::OPEN_MODE_UNSPECIFIED,
+        ] {
+            let error = open(&path, options(mode)).await.err().unwrap();
+            assert!(error.is(Code::Generation), "{mode:?}: {error}");
+            assert_eq!(listing(&path), before, "{mode:?}");
+            assert_eq!(snapshot(&path), bytes, "{mode:?}");
+        }
+        // An attach to a Vault with a work tree that is stated.
+        let attach = OpenOptions::default().with_work_tree(scheda::v1::WorkTree::WORK_TREE_FILES);
+        let error = open(&path, attach).await.err().unwrap();
+        assert!(error.is(Code::Generation), "attach: {error}");
+        assert_eq!(listing(&path), before, "attach");
+        assert_eq!(snapshot(&path), bytes, "attach");
     });
 }

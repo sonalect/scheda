@@ -112,7 +112,8 @@ fn marker_problem(error: Error) -> Result<Problem, Error> {
 /// Runs every check over `vault` and returns the problems, in the order of
 /// the layers: the marker of the commit `HEAD` names, the owner-only modes
 /// of `.scheda/`, the unmerged entries, the perimeter of the isolated tree,
-/// the collection files, the Document files, the journal segments, and the
+/// the collection files, the Document files, the journal segments, the layout
+/// of the folders, and the
 /// id maps of the journals (the last four over the commits `HEAD` names),
 /// and the files a person changed and did not commit. No problem means the
 /// Vault is sound as far as the checks go.
@@ -152,6 +153,7 @@ pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
     problems.extend(faults.iter().map(problem_of));
     problems.extend(check_documents(&views, &declarations, vault.encryption())?);
     problems.extend(check_journals(&views, &declarations)?);
+    problems.extend(crate::layout::check_layout(&views, &declarations)?);
     problems.extend(check_journal_id_maps(
         &vault.index(),
         &views,
@@ -232,7 +234,7 @@ mod tests {
         /// and a `diary` isolated collection.
         fn vault(name: &str) -> Scratch {
             let scratch = Scratch::new(name);
-            scratch.write(".scheda.yaml", b"version: 3\n");
+            scratch.write(".scheda.yaml", b"version: 4\n");
             scratch.write(".gitignore", b".scheda/\n.isolated/\n");
             scratch.write(
                 "notes/.collection.yaml",
@@ -496,7 +498,7 @@ mod tests {
         scratch.commit("fixture");
         let vault = scratch.open().await;
         assert!(run(&vault).await.unwrap().is_empty());
-        scratch.write(".scheda.yaml", b"version: 4\n");
+        scratch.write(".scheda.yaml", b"version: 3\n");
         scratch.write("bad/.collection.yaml", b"name: bad\n");
         scratch.commit("another generation");
         scratch.write("notes/a.md", b"modified");

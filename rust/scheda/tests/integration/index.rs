@@ -600,3 +600,96 @@ fn a_standard_collection_needs_no_map() {
         assert!(map_file(&path).exists());
     });
 }
+
+/// The segment paths the map of `log` lists, and the segment each id is in.
+fn mapped_segments(path: &Path) -> Vec<(String, String)> {
+    let text = std::fs::read_to_string(map_file(path)).unwrap();
+    let count: usize = text.lines().nth(2).unwrap().parse().unwrap();
+    let segments: Vec<String> = text
+        .lines()
+        .skip(3)
+        .take(count)
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    text.lines()
+        .skip(3 + count)
+        .map(|line| {
+            let (id, at) = line.split_once('\t').unwrap();
+            (
+                id.to_owned(),
+                segments[at.parse::<usize>().unwrap()].clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_journal_of_more_than_64_segments_is_laid_out_canonically_and_its_id_map_follows_the_moved_segments()
+ {
+    both(|| async {
+        let scratch = Scratch::new("journal-layout");
+        let path = scratch.join("vault");
+        let vault = opened(&path).await;
+        // One line to a segment: every append starts a segment file.
+        let declaration: CollectionDeclaration = serde_json::from_value(
+            serde_json::json!({"name": "log", "schema": {"journal": {"segmentMaxLines": 1}}}),
+        )
+        .unwrap();
+        vault.create_collection(declaration).await.unwrap();
+        let ids: Vec<String> = (0..200).map(|n| format!("l{n:03}")).collect();
+        for id in &ids[..64] {
+            line(&vault, id).await;
+        }
+        let (_, files) = crate::layout::physical(&path, "log");
+        assert_eq!(files.len(), 64);
+        assert!(files.iter().all(|file| !file.contains('/')), "{files:?}");
+        // The map is built while the folder is flat; the split that follows
+        // moves segments the map names.
+        wait_indexed(&path).await;
+        assert_eq!(mapped_segments(&path).len(), 64);
+
+        for id in &ids[64..] {
+            line(&vault, id).await;
+        }
+        let (_, files) = crate::layout::physical(&path, "log");
+        assert_eq!(files.len(), 200, "one segment for each line");
+        assert!(files.iter().all(|file| file.starts_with('_')), "{files:?}");
+        let names: std::collections::BTreeSet<String> = files
+            .iter()
+            .map(|file| file.rsplit('/').next().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            files,
+            crate::layout::canonical(&names),
+            "the segment folder is canonical"
+        );
+
+        for id in &ids {
+            assert!(found(&vault, id).await, "{id}");
+        }
+        wait_indexed(&path).await;
+        let map = mapped_segments(&path);
+        assert_eq!(map.len(), 200, "the map lists every line");
+        for (id, segment) in &map {
+            let below = segment.strip_prefix("log/").unwrap();
+            assert!(files.contains(below), "the map names a gone path {segment}");
+            let text = std::fs::read_to_string(path.join(segment)).unwrap();
+            assert!(text.starts_with(&format!("{id}: ")), "{id} in {segment}");
+        }
+        // A line the map knows is found there: a second append of it is
+        // refused.
+        let again = collection(&vault, "log")
+            .await
+            .create(DocumentCreation {
+                id: Some("l000".to_owned()),
+                raw: Some(b"{}".to_vec()),
+                note: Some("again".to_owned()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(again.is(Code::AlreadyExists), "{again}");
+        assert_settled(&path, &[]);
+        vault.close(Empty::default()).await.unwrap();
+    });
+}

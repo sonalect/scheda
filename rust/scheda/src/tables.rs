@@ -390,6 +390,17 @@ enum Item {
     },
     DocumentGone {
         id: String,
+        path: String,
+        /// The blob it had, when the round knows it.
+        blob: Option<Oid>,
+    },
+    /// A Document that moved to another folder of the layout with the same
+    /// blob: nothing to project, only its file to follow.
+    Moved {
+        id: String,
+        from: String,
+        path: String,
+        blob: Oid,
     },
     Segment {
         path: String,
@@ -411,6 +422,11 @@ enum Read {
     },
     DocumentGone {
         id: String,
+    },
+    Moved {
+        from: String,
+        path: String,
+        blob: Oid,
     },
     Lines {
         path: String,
@@ -681,6 +697,7 @@ impl Work<'_> {
     ) -> Result<(), Error> {
         let mut gone_ids = Vec::new();
         let mut gone_files = Vec::new();
+        let mut moved_from = Vec::new();
         let mut whole_files = Vec::new();
         let mut files = Vec::new();
         let mut sources = Vec::new();
@@ -705,6 +722,10 @@ impl Work<'_> {
                     });
                 }
                 Read::DocumentGone { id } => gone_ids.push(id),
+                Read::Moved { from, path, blob } => {
+                    files.push((path, blob.to_string()));
+                    moved_from.push(from);
+                }
                 Read::Lines {
                     path,
                     blob,
@@ -740,6 +761,7 @@ impl Work<'_> {
         table.delete_rows("file", &by_file).await?;
         table.delete_rows("id", &gone_ids).await?;
         table.upsert(&rows).await?;
+        gone_files.extend(moved_from);
         table.remove_files(&gone_files).await?;
         table.put_files(&files).await?;
         self.counts.documents_read += counts.documents_read;
@@ -1253,7 +1275,11 @@ fn list(
                     };
                     match file? {
                         Some(blob) => items.push(Item::Document { id, path, blob }),
-                        None => items.push(Item::DocumentGone { id }),
+                        None => items.push(Item::DocumentGone {
+                            id,
+                            path,
+                            blob: delta.gone,
+                        }),
                     }
                 }
             }
@@ -1289,17 +1315,46 @@ fn list(
                     let Some(id) = document_id(decl, path) else {
                         continue;
                     };
-                    Item::DocumentGone { id }
+                    Item::DocumentGone {
+                        id,
+                        path: path.clone(),
+                        blob: old_of(path),
+                    }
                 });
             }
         }
     }
     // A Document moved between folders is a file gone at one path and a
-    // file there at another: the id is still there, so it is not gone.
+    // file there at another: the id is still there, so it is not gone. With
+    // the same blob it is no change either (D4): it is not projected again.
+    let gone_at: std::collections::HashMap<String, (String, Oid)> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::DocumentGone {
+                id,
+                path,
+                blob: Some(blob),
+            } => Some((id.clone(), (path.clone(), *blob))),
+            _ => None,
+        })
+        .collect();
+    for item in &mut items {
+        if let Item::Document { id, path, blob } = item
+            && let Some((from, old)) = gone_at.get(id.as_str())
+            && old == blob
+        {
+            *item = Item::Moved {
+                id: std::mem::take(id),
+                from: from.clone(),
+                path: std::mem::take(path),
+                blob: *blob,
+            };
+        }
+    }
     let present: std::collections::HashSet<&str> = items
         .iter()
         .filter_map(|item| match item {
-            Item::Document { id, .. } => Some(id.as_str()),
+            Item::Document { id, .. } | Item::Moved { id, .. } => Some(id.as_str()),
             _ => None,
         })
         .collect();
@@ -1307,7 +1362,7 @@ fn list(
         .iter()
         .enumerate()
         .filter(
-            |(_, item)| matches!(item, Item::DocumentGone { id } if present.contains(id.as_str())),
+            |(_, item)| matches!(item, Item::DocumentGone { id, .. } if present.contains(id.as_str())),
         )
         .map(|(at, _)| at)
         .collect();
@@ -1336,7 +1391,10 @@ fn read(
                 path,
                 blob,
             },
-            Item::DocumentGone { id } => Read::DocumentGone { id },
+            Item::DocumentGone { id, .. } => Read::DocumentGone { id },
+            Item::Moved {
+                from, path, blob, ..
+            } => Read::Moved { from, path, blob },
             Item::SegmentGone { path } => Read::SegmentGone { path },
             Item::Segment { path, blob, old } => {
                 let bytes = snap

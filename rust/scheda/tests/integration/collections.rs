@@ -215,7 +215,7 @@ fn update_keeps_the_unknown_keys_of_the_file_and_writes_no_default() {
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 3\n"),
+                (".scheda.yaml", "version: 4\n"),
                 (".gitignore", ".scheda/\n.isolated/\n"),
                 (
                     "cache/.collection.yaml",
@@ -303,7 +303,7 @@ fn a_retired_index_key_in_a_collection_file_is_read_past_kept_and_not_acted_on()
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 3\n"),
+                (".scheda.yaml", "version: 4\n"),
                 (".gitignore", ".scheda/\n.isolated/\n"),
                 (
                     "notes/.collection.yaml",
