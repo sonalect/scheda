@@ -49,7 +49,10 @@ API or on-disk format changes bump the minor.
   macOS and Windows above all, are many times slower than a workstation.
 - On Windows, Bazel builds without the `fastbuild` feature of `rules_cc`,
   which passed the linker `/DEBUG:FASTLINK`: Visual Studio 2026 dropped
-  the flag and warned (LNK4315) on every link.
+  the flag and warned (LNK4315) on every link. And it links programs with
+  `/NOIMPLIB /NOEXP`: libgit2 declares its functions `dllexport` under
+  MSVC, so link.exe wrote an import library for every program that links
+  it and said so, which rustc showed as a warning.
 - The Rust toolchain archives Bazel downloads are checked against the
   sha256 that static.rust-lang.org publishes for each, on the six hosts.
 - On Windows, Bazel builds for the host under a short platform name

@@ -29,6 +29,16 @@ common --@rules_rust//rust/settings:per_crate_rustc_flag=external/rules_rust++cr
 # flag, and /Od /Z7 for C, which here only the build scripts of crates
 # compile.
 build:windows --features=-fastbuild
+# Under MSVC libgit2 declares each of its functions `__declspec(dllexport)`
+# (`GIT_EXTERN`), so every program that links it exports them, and link.exe
+# writes an import library and an export file beside it and says so on
+# stdout ("Creating library ... and object ..."). rustc hides that line only
+# from a linker named plainly `link.exe`, as Cargo leaves it; Bazel names
+# link.exe by its full path, and rustc shows the line as a warning. A
+# program is no library: nothing links against it, and no Rust target here
+# is a shared library.
+build:windows --@rules_rust//rust/settings:extra_rustc_flag=-Clink-arg=/NOIMPLIB
+build:windows --@rules_rust//rust/settings:extra_rustc_flag=-Clink-arg=/NOEXP
 # cl.exe and link.exe read no path past MAX_PATH (260), long paths enabled
 # or not. On Windows the target platform is the host under a short name
 # (`//bazel:host`), so outputs go to `bazel-out/w-fastbuild` instead of
