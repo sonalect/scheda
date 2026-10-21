@@ -303,6 +303,13 @@ jobs:
     name: windows-arm64
     runs-on: windows-11-arm
     timeout-minutes: 240
+    # Two tests of a binary at a time, not one per core. This runner has
+    # only its system disk, where every flush waits (a write of the library
+    # flushes twice: 400 writes took 33 s here, 3 s on the local disk of
+    # windows-amd64), and four tests at once, with the Lance indexer of
+    # each, made 64 writes queued on one handle outrun their 60 s.
+    env:
+      RUST_TEST_THREADS: "2"
     steps:
       - name: Configure git
         run: git config --global init.defaultBranch main
