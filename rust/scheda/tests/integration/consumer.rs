@@ -53,7 +53,7 @@ use serde_json::{Value, json};
 use tokio::runtime::{Handle, Runtime};
 
 use crate::common::{
-    Scratch, command, git, opening, snapshot, vault as built_vault, work_tree, write,
+    Scratch, command, file_url, git, opening, snapshot, vault as built_vault, work_tree, write,
 };
 
 const DEADLINE: Duration = Duration::from_secs(60);
@@ -950,7 +950,7 @@ fn sync_to_an_empty_mirror_pushes_the_commit() {
         reference.to_sync().unwrap()
     };
     mirror_ref
-        .set(MirrorSetting::default().with_url(format!("file://{}", mirror.display())))
+        .set(MirrorSetting::default().with_url(file_url(&mirror)))
         .unwrap();
     mirror_ref.sync(Empty::default()).unwrap();
     assert_eq!(git_out(&mirror, &["rev-parse", "HEAD"]), head(&fx.path));

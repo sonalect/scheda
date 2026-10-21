@@ -13,7 +13,9 @@ use scheda::v1::{
     OpenMode, OpenOptions, VaultAsync, VaultErrorCode as Code,
 };
 
-use crate::common::{Scratch, both, git, open, snapshot, vault as built_vault, work_tree, write};
+use crate::common::{
+    Scratch, both, file_url, git, open, snapshot, vault as built_vault, work_tree, write,
+};
 use crate::probe::{assert_settled, commits, git_out};
 
 fn standard(name: &str) -> CollectionDeclaration {
@@ -101,10 +103,6 @@ fn bare(scratch: &Scratch, name: &str) -> PathBuf {
     path
 }
 
-fn url(path: &Path) -> String {
-    format!("file://{}", path.display())
-}
-
 /// A bare mirror that holds a Vault with the collection `notes` and the
 /// Documents `docs` (id, text), made through the handle itself.
 async fn seeded(scratch: &Scratch, name: &str, docs: &[(&str, &str)]) -> PathBuf {
@@ -121,7 +119,7 @@ async fn seeded(scratch: &Scratch, name: &str, docs: &[(&str, &str)]) -> PathBuf
     }
     mirror_of(&seed)
         .await
-        .set(MirrorSetting::default().with_url(url(&mirror)))
+        .set(MirrorSetting::default().with_url(file_url(&mirror)))
         .await
         .unwrap();
     mirror_of(&seed).await.push(Empty::default()).await.unwrap();
@@ -130,7 +128,7 @@ async fn seeded(scratch: &Scratch, name: &str, docs: &[(&str, &str)]) -> PathBuf
 
 async fn clone_of(scratch: &Scratch, name: &str, mirror: &Path) -> (PathBuf, DynVaultAsync) {
     let path = scratch.join(name);
-    let vault = open(&path, OpenOptions::default().with_mirror(url(mirror)))
+    let vault = open(&path, OpenOptions::default().with_mirror(file_url(mirror)))
         .await
         .unwrap();
     (path, vault)
@@ -172,7 +170,7 @@ fn a_missing_path_an_empty_folder_and_create_new_clone_the_mirror() {
             let vault = open(
                 &path,
                 OpenOptions::default()
-                    .with_mirror(url(&mirror))
+                    .with_mirror(file_url(&mirror))
                     .with_mode(mode),
             )
             .await
@@ -182,7 +180,7 @@ fn a_missing_path_an_empty_folder_and_create_new_clone_the_mirror() {
             assert_eq!(head(&path), mirror_head(&mirror), "{name}");
             assert_eq!(
                 git_out(&path, &["config", "remote.origin.url"]),
-                url(&mirror)
+                file_url(&mirror)
             );
             assert_eq!(
                 git_out(&path, &["config", "--local", "core.longpaths"]),
@@ -191,7 +189,7 @@ fn a_missing_path_an_empty_folder_and_create_new_clone_the_mirror() {
             assert_clean(&path);
             drop(vault);
             // Open again: the Vault exists, and the URL is its mirror's.
-            open(&path, OpenOptions::default().with_mirror(url(&mirror)))
+            open(&path, OpenOptions::default().with_mirror(file_url(&mirror)))
                 .await
                 .unwrap();
             assert_eq!(commits(&path), before, "{name}: open adds nothing");
@@ -274,10 +272,13 @@ fn a_mirror_with_a_marker_of_another_generation_is_generation_and_leaves_nothing
         let other = scratch.join("other");
         work_tree(&other, &[(".scheda.yaml", "version: 4\n")]);
         let target = scratch.join("here/vault");
-        let error = open(&target, OpenOptions::default().with_mirror(url(&other)))
-            .await
-            .err()
-            .unwrap();
+        let error = open(
+            &target,
+            OpenOptions::default().with_mirror(file_url(&other)),
+        )
+        .await
+        .err()
+        .unwrap();
         assert!(error.is(Code::Generation));
         assert!(!target.exists());
         let left: Vec<_> = std::fs::read_dir(scratch.join("here"))
@@ -288,10 +289,13 @@ fn a_mirror_with_a_marker_of_another_generation_is_generation_and_leaves_nothing
         // An empty folder stays an empty folder.
         let folder = scratch.join("folder");
         std::fs::create_dir(&folder).unwrap();
-        let error = open(&folder, OpenOptions::default().with_mirror(url(&other)))
-            .await
-            .err()
-            .unwrap();
+        let error = open(
+            &folder,
+            OpenOptions::default().with_mirror(file_url(&other)),
+        )
+        .await
+        .err()
+        .unwrap();
         assert!(error.is(Code::Generation));
         assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
     });
@@ -301,7 +305,7 @@ fn a_mirror_with_a_marker_of_another_generation_is_generation_and_leaves_nothing
 fn a_clone_that_fails_leaves_no_vault_and_returns() {
     both(|| async {
         let scratch = Scratch::new("bad-clone");
-        let bad = format!("file://{}", scratch.join("no-such-mirror.git").display());
+        let bad = file_url(&scratch.join("no-such-mirror.git"));
         let start = Instant::now();
         let target = scratch.join("here/vault");
         let error = open(&target, OpenOptions::default().with_mirror(&bad))
@@ -341,7 +345,7 @@ fn two_opens_of_one_new_path_with_a_mirror_make_one_vault() {
             let handles: Vec<_> = (0..3)
                 .map(|_| {
                     let path = path.clone();
-                    let options = OpenOptions::default().with_mirror(url(&mirror));
+                    let options = OpenOptions::default().with_mirror(file_url(&mirror));
                     tokio::spawn(async move { open(&path, options).await })
                 })
                 .collect();
@@ -625,7 +629,7 @@ fn sync_against_an_empty_mirror_pushes() {
         put(&vault, "a.md", "one").await;
         mirror_of(&vault)
             .await
-            .set(MirrorSetting::default().with_url(url(&mirror)))
+            .set(MirrorSetting::default().with_url(file_url(&mirror)))
             .await
             .unwrap();
         mirror_of(&vault)
@@ -676,7 +680,7 @@ async fn vault_with_nested_origin(
     vault.create_collection(isolated("diary")).await.unwrap();
     mirror_of(&vault)
         .await
-        .set(MirrorSetting::default().with_url(url(mirror_path)))
+        .set(MirrorSetting::default().with_url(file_url(mirror_path)))
         .await
         .unwrap();
     collection(&vault, "diary")
@@ -686,10 +690,7 @@ async fn vault_with_nested_origin(
         .unwrap();
     let nested = path.join(".isolated");
     assert!(nested.join(".git").exists());
-    let unreachable = format!(
-        "file://{}",
-        scratch.join("unreachable/nested.git").display()
-    );
+    let unreachable = file_url(&scratch.join("unreachable/nested.git"));
     git(&nested, &["remote", "add", "origin", &unreachable]);
     vault
 }
@@ -890,7 +891,7 @@ fn auto_sync_pushes_every_write_of_the_main_repository() {
         let vault = open(
             &path,
             OpenOptions::default()
-                .with_mirror(url(&mirror))
+                .with_mirror(file_url(&mirror))
                 .with_auto_sync(true),
         )
         .await
@@ -916,7 +917,7 @@ fn auto_sync_pulls_at_open() {
         let again = open(
             &path,
             OpenOptions::default()
-                .with_mirror(url(&mirror))
+                .with_mirror(file_url(&mirror))
                 .with_auto_sync(true),
         )
         .await
@@ -1110,7 +1111,7 @@ fn commit_by_hand(
     let dir = scratch.join(name);
     git(
         &scratch.join("."),
-        &["clone", "--quiet", &url(mirror), name],
+        &["clone", "--quiet", &file_url(mirror), name],
     );
     for (rel, text) in edits {
         match text {
@@ -1276,7 +1277,7 @@ fn auto_sync_at_open_keeps_a_refused_pull_as_the_sync_failure() {
         let again = open(
             &path,
             OpenOptions::default()
-                .with_mirror(url(&mirror))
+                .with_mirror(file_url(&mirror))
                 .with_auto_sync(true),
         )
         .await

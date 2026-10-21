@@ -21,7 +21,9 @@ use scheda::v1::{
     VaultAsync, VaultErrorCode as Code,
 };
 
-use crate::common::{Child, Scratch, both, git, open, snapshot, vault as built_vault, write};
+use crate::common::{
+    Child, Scratch, both, file_url, git, open, snapshot, vault as built_vault, write,
+};
 use crate::probe::{assert_settled, commits, git_out};
 
 const DEADLINE: Duration = Duration::from_secs(30);
@@ -319,7 +321,7 @@ fn a_pull_is_indexed() {
             &mirror,
             &["init", "--quiet", "--bare", "--initial-branch=main"],
         );
-        let url = format!("file://{}", mirror.display());
+        let url = file_url(&mirror);
         let seed = opened(&scratch.join("seed")).await;
         seed.create_collection(journal("log")).await.unwrap();
         mirror_of(&seed)

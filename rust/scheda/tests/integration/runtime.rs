@@ -22,8 +22,8 @@ use serde_json::json;
 use tokio::runtime::{Builder, Runtime};
 
 use crate::common::{
-    Scratch, all, both, collection, command, git, mirror, open, opening, snapshot, stream_of,
-    vault as built_vault, write_waits_for_the_lock,
+    Scratch, all, both, collection, command, file_url, git, mirror, open, opening, snapshot,
+    stream_of, vault as built_vault, write_waits_for_the_lock,
 };
 
 /// How long a step may take before the test gives up on it.
@@ -817,7 +817,7 @@ fn a_push_dropped_midway_leaves_the_commit_local_and_the_next_push_carries_it() 
     both(|| async {
         let (scratch, path) = fresh("runtime-dropped-push");
         let (bare, started) = stalling_mirror(&scratch);
-        let url = format!("file://{}", bare.display());
+        let url = file_url(&bare);
         git(&path, &["remote", "add", "origin", &url]);
         let vault = open(&path, options().with_auto_sync(true).with_mirror(url))
             .await

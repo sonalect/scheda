@@ -60,7 +60,8 @@ API or on-disk format changes bump the minor.
   used only by the Unix code of the owner-only checks were unused there,
   which the workspace's `warnings = "deny"` turns into errors. The CLI
   test that writes to `/dev/full` runs on Linux only, the one system with
-  that device.
+  that device. The tests write the `file://` URL of a mirror as Windows
+  needs it (`file:///C:/…`), not `file://` before the path.
 
 ## [0.24.0] - 2026-10-21
 

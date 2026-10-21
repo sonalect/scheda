@@ -600,8 +600,14 @@ mod tests {
             .to_owned()
     }
 
+    /// The `file://` URL of `path`: `file:///C:/a/m.git` on Windows.
     fn url(path: &Path) -> String {
-        format!("file://{}", path.display())
+        let path = path.to_string_lossy().replace('\\', "/");
+        if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        }
     }
 
     async fn put(vault: &Arc<Vault>, id: &str, raw: &str) {

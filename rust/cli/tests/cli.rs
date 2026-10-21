@@ -39,6 +39,17 @@ use common::{
 const NOTES: &str = "tc_notes";
 const PLAIN: &str = r#"{"standard":{},"indexScope":"INDEX_SCOPE_NO_VECTORS"}"#;
 
+/// The `file://` URL of the absolute path `path`: `file:///home/a/m.git`,
+/// and on Windows `file:///C:/a/m.git`.
+fn file_url(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    }
+}
+
 /// A new Vault at the scratch path with the collection [`NOTES`].
 fn new_vault(scratch: &Scratch) -> PathBuf {
     let path = scratch.vault();
@@ -1292,7 +1303,7 @@ fn the_mirror_is_set_pushed_and_removed() {
         .status()
         .unwrap();
     assert!(init.success());
-    let url = format!("file://{}", bare.display());
+    let url = file_url(&bare);
 
     assert_eq!(
         run_on(&path, &["mirror", "info"])

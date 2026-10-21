@@ -73,6 +73,17 @@ impl Scratch {
     }
 }
 
+/// The `file://` URL of the absolute path `path`: `file:///home/a/m.git`,
+/// and on Windows `file:///C:/a/m.git`.
+pub fn file_url(path: &Path) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    }
+}
+
 /// `git args` to run in `dir`, with the user's and the system's git
 /// configuration left out and an identity of its own.
 pub fn command(dir: &Path, args: &[&str]) -> Command {

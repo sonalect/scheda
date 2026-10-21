@@ -22,7 +22,7 @@ use scheda::{Error, Scheda};
 use serde_json::json;
 
 use crate::common::{
-    Scratch, both, collection, mirror, open, opening, snapshot, vault as built_vault,
+    Scratch, both, collection, file_url, mirror, open, opening, snapshot, vault as built_vault,
     write_waits_for_the_lock,
 };
 
@@ -297,10 +297,7 @@ fn mirror_info_gives_the_url_auto_sync_and_the_last_failure_of_a_sync_by_itself(
 
         // A mirror nobody can reach: the push after a write fails, the write
         // is stored, and the failure shows here.
-        let url = format!(
-            "file://{}",
-            scratch.join("nowhere").to_string_lossy().replace('\\', "/")
-        );
+        let url = file_url(&scratch.join("nowhere"));
         the_mirror
             .set(MirrorSetting::default().with_url(url.clone()))
             .await
