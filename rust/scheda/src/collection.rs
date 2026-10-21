@@ -18,10 +18,8 @@ use crate::id::require_slug;
 use crate::repo::{NodeKind, Repo, Snap};
 use crate::stored::{self, Format, Unknowns};
 
-const MIB: u64 = 1024 * 1024;
-
 /// Bytes per journal segment when the declaration sets no limit.
-pub(crate) const DEFAULT_SEGMENT_MAX_BYTES: u64 = MIB;
+pub(crate) const DEFAULT_SEGMENT_MAX_BYTES: u64 = 128 * 1024;
 
 const COLLECTION_FILENAMES: [&str; 3] = [".collection.yaml", ".collection.yml", ".collection.json"];
 const LEFTOVER_SCHEMA_FILENAMES: [&str; 3] = [".schema.yaml", ".schema.yml", ".schema.json"];

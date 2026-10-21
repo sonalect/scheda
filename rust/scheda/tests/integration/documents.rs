@@ -1701,9 +1701,9 @@ fn the_trailers_of_a_batch_name_each_document_with_its_own_note() {
         assert_eq!(
             values,
             vec![
-                json!({"collection": "notes", "id": "a.md", "note": "first note\nwith a second line"}),
-                json!({"collection": "log", "id": "e1", "note": "note for the log"}),
-                json!({"collection": "notes", "id": "b.md", "note": "note \"quoted\""}),
+                json!({"collection": "notes", "id": "a.md", "note": "first note\nwith a second line", "write": 0}),
+                json!({"collection": "log", "id": "e1", "note": "note for the log", "write": 0}),
+                json!({"collection": "notes", "id": "b.md", "note": "note \"quoted\"", "write": 0}),
             ]
         );
         // Git itself reads them as trailers.
@@ -1728,7 +1728,7 @@ fn the_trailers_of_a_batch_name_each_document_with_its_own_note() {
         let message = git_out(&path, &["log", "-1", "--format=%B"]);
         assert_eq!(
             message,
-            "update\n\nScheda-Note: {\"collection\":\"notes\",\"id\":\"a.md\",\"note\":\"update\"}"
+            "update\n\nScheda-Note: {\"collection\":\"notes\",\"id\":\"a.md\",\"note\":\"update\",\"write\":0}"
         );
     });
 }

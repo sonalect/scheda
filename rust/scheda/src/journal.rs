@@ -1286,6 +1286,36 @@ mod tests {
     }
 
     #[test]
+    fn a_journal_declared_without_a_cap_rotates_its_open_segment_at_128_kib() {
+        let scratch = Scratch::new("default-cap");
+        let log = scratch.declare("log", "  journal: {}\n");
+        let limits = Limits::of(&log).unwrap();
+        assert_eq!(limits.max_bytes, 128 * 1024);
+        let today = "2026-09-15";
+        let first = PathBuf::from("log/00000001-w.jsonl");
+        let line = encode_line("a", &[b'x'; 4000]).unwrap();
+        let mut size = 0u64;
+        let mut lines = 0u64;
+        loop {
+            let snap = scratch.snap(&log);
+            let segment = segment_for_append(&snap, &log, line.len() as u64, "w", today).unwrap();
+            if segment != first {
+                assert_eq!(segment, PathBuf::from("log/00000002-w.jsonl"));
+                break;
+            }
+            let mut bytes = std::fs::read(scratch.0.join(&first)).unwrap_or_default();
+            bytes.extend_from_slice(&line);
+            scratch.write("log/00000001-w.jsonl", &bytes);
+            size = bytes.len() as u64;
+            lines += 1;
+            assert!(lines < 1000, "no rotation");
+        }
+        // The segment closed because the next line would pass 128 KiB.
+        assert!(size <= 128 * 1024 && size + line.len() as u64 > 128 * 1024);
+        assert_eq!(lines, 128 * 1024 / line.len() as u64);
+    }
+
+    #[test]
     fn rotation_by_line_count() {
         let scratch = Scratch::new("lines");
         let log = scratch.declare("log", "  journal:\n    segmentMaxLines: 2\n");

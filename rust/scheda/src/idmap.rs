@@ -1003,15 +1003,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_journal_with_no_cap_rotates_at_one_mebibyte() {
+    async fn a_journal_with_no_cap_rotates_at_128_kib() {
         let scratch = Scratch::new("default-cap");
         let (path, vault) = scratch.vault().await;
         let big = |id: &str| {
             let mut request = creation(id, false);
-            request.raw = Some(format!("{{\"p\":\"{}\"}}", "x".repeat(300_000)).into_bytes());
+            request.raw = Some(format!("{{\"p\":\"{}\"}}", "x".repeat(40_000)).into_bytes());
             request
         };
-        // `old` and three lines of 300 KB fit in one MiB, the next does
+        // `old` and three lines of 40 KB fit in 128 KiB, the next does
         // not: it opens the second segment.
         for id in ["b1", "b2", "b3"] {
             append(&vault, big(id)).await.0.unwrap();
@@ -1023,7 +1023,7 @@ mod tests {
         // next append, which opens a new one.
         std::fs::write(
             path.join(format!("log/00000009-{}.jsonl", vault.writer())),
-            format!("big: {}\n", "x".repeat(1_100_000)),
+            format!("big: {}\n", "x".repeat(150_000)),
         )
         .unwrap();
         fixture::commit_all(&path);

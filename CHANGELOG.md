@@ -42,6 +42,15 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- The default segment cap of a journal is 128 KiB, was 1 MiB: an append
+  rewrites the open segment, so a smaller one costs less. A cap set in the
+  declaration (1 byte to 32 MiB) is unchanged, and a line longer than the
+  cap still gets a segment of its own. A journal declared without a cap
+  rotates sooner; `Collection.Get` reports `segment_max_bytes` 131072.
+- Each `Scheda-Note:` trailer of a commit carries `write`, the number of
+  its write in the commit. It is 0 until a group commit puts several
+  writes in one commit. `write_id` stays the commit's, and a trailer
+  without `write` still reads as write 0.
 - The Index's folders and the id maps of journals have short names, so
   that no path under `.scheda/index` passes 80 characters however long a
   collection or a column is named (Lance's own `_indices/{uuid}/…` files

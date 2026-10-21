@@ -12,10 +12,12 @@
 //! write that changed something:
 //!
 //! ```text
-//! Scheda-Note: {"collection":"notes","id":"a.md","note":"why it was written"}
+//! Scheda-Note: {"collection":"notes","id":"a.md","note":"why it was written","write":0}
 //! ```
 //!
-//! The value is a JSON object of the collection, the id, and the note, on one
+//! The value is a JSON object of the collection, the id, the note, and `write`
+//! (the number of the write in its commit, always 0 until a group commit puts
+//! several writes in one commit), on one
 //! line (the newlines of a note are escaped). The history of a Document reads
 //! the trailers whose collection and id are its own, so a commit that wrote
 //! several Documents shows each one its own note.
@@ -754,11 +756,12 @@ fn message(first_line: &str, trailers: &[String]) -> String {
 }
 
 /// The `Scheda-Note:` trailer of one Document write: a JSON object of the
-/// collection, the id, and the note, on one line.
+/// collection, the id, the note, and the number of the write in its commit
+/// (`write`, 0 for now), on one line. A trailer without `write` is write 0.
 fn trailer(collection: &str, id: &str, note: &str) -> String {
     format!(
         "Scheda-Note: {}",
-        json!({"collection": collection, "id": id, "note": note})
+        json!({"collection": collection, "id": id, "note": note, "write": 0})
     )
 }
 
@@ -1567,14 +1570,28 @@ mod tests {
         let one = trailer("notes", "a.md", "line one\nline \"two\"");
         assert_eq!(
             one,
-            r#"Scheda-Note: {"collection":"notes","id":"a.md","note":"line one\nline \"two\""}"#
+            r#"Scheda-Note: {"collection":"notes","id":"a.md","note":"line one\nline \"two\"","write":0}"#
         );
         assert!(!one.contains('\n'));
         assert_eq!(
             message("subject", &[one.clone(), trailer("log", "e", "n")]),
             format!(
-                "subject\n\n{one}\nScheda-Note: {{\"collection\":\"log\",\"id\":\"e\",\"note\":\"n\"}}\n"
+                "subject\n\n{one}\nScheda-Note: {{\"collection\":\"log\",\"id\":\"e\",\"note\":\"n\",\"write\":0}}\n"
             )
+        );
+    }
+
+    #[test]
+    fn a_trailer_carries_write_zero_and_one_without_write_parses() {
+        let one = trailer("notes", "a.md", "n");
+        let value: serde_json::Value =
+            serde_json::from_str(one.strip_prefix("Scheda-Note: ").unwrap()).unwrap();
+        assert_eq!(value["write"], 0);
+        let old = "s\n\nScheda-Note: {\"collection\":\"notes\",\"id\":\"a.md\",\"note\":\"old\"}\n";
+        assert_eq!(note_of(old, "notes", "a.md").as_deref(), Some("old"));
+        assert_eq!(
+            note_of(&message("s", &[one]), "notes", "a.md").as_deref(),
+            Some("n")
         );
     }
 

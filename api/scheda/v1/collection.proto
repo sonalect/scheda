@@ -215,7 +215,7 @@ message Standard {}
 // that is hit closes a segment, even in the middle of a day. The library
 // names the segment files.
 message Journal {
-  // Bytes per segment. Unset: 1 MiB. Set: 1 byte to 32 MiB.
+  // Bytes per segment. Unset: 128 KiB. Set: 1 byte to 32 MiB.
   uint64 segment_max_bytes = 1 [(buf.validate.field) = {
     uint64: {
       gte: 1
