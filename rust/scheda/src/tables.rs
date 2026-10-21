@@ -2525,14 +2525,18 @@ mod tests {
         let took = started.elapsed();
         // The whole round would take 40 portions.
         assert!(took < PORTION * 4, "close took {took:?}");
-        // The portion in flight ends, and close returned before four more
-        // could; none is asked after it. Counted from the start of close,
-        // not from a number: a busy machine can run the round on for a
-        // while before this task looks at it.
+        // Close returned before four more portions could be asked. Counted
+        // from the start of close, not from a number: a busy machine can
+        // run the round on for a while before this task looks at it.
         let after = asked.load(Ordering::SeqCst);
         assert!(after <= before + 4, "{before} portions, then {after}");
+        // A blocking embedder's replies are pulled on the blocking pool:
+        // right after it sends one vector it starts on the next, and only
+        // the send that follows finds the round gone. So one portion may
+        // begin after close returned, never a second.
         tokio::time::sleep(PORTION * 2).await;
-        assert_eq!(asked.load(Ordering::SeqCst), after, "a portion after close");
+        let last = asked.load(Ordering::SeqCst);
+        assert!(last <= after + 1, "{after} portions at close, {last} later");
     }
 
     /// A Projector of Documents of lines: the first is `title` (fts), each

@@ -122,7 +122,7 @@ fn vault_info_gives_the_path_the_index_path_and_the_writer() {
         assert_eq!(info.path.as_deref(), Some(root.to_str().unwrap()));
         assert_eq!(
             info.index_path.as_deref(),
-            Some(root.join(".scheda/index").to_str().unwrap())
+            Some(root.join(".scheda").join("index").to_str().unwrap())
         );
         assert_eq!(info.writer.as_deref(), Some("writer-one"));
     });
