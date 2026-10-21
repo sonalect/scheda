@@ -74,7 +74,9 @@ API or on-disk format changes bump the minor.
   libgit2 there adds to no index. The indexer test of a failed round reads
   its watch before the write, so on a slow machine the item of the failure
   is not merged into the state of the retry, and gives up after 20 s
-  instead of waiting for ever.
+  instead of waiting for ever. On Windows the snapshot of a Vault in the
+  integration tests names a lock file another handle holds instead of
+  reading it, which a mandatory Windows lock refuses.
 
 ## [0.24.0] - 2026-10-21
 

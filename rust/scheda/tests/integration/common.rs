@@ -156,6 +156,20 @@ pub fn vault(dir: &Path) {
 /// rounds (`.scheda/index.lock`) are left out: they are derived, and the
 /// indexer of the handle writes them in the background.
 pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    /// The bytes of `path`. On Windows a lock is mandatory: a lock file
+    /// another handle holds (`.scheda/commit.lock`) cannot be read, and
+    /// stands in the snapshot by its name alone.
+    fn read_unless_locked(path: &Path) -> Vec<u8> {
+        /// `ERROR_LOCK_VIOLATION`.
+        #[cfg(windows)]
+        const LOCKED: i32 = 33;
+        match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            #[cfg(windows)]
+            Err(err) if err.raw_os_error() == Some(LOCKED) => b"(locked)".to_vec(),
+            Err(err) => panic!("read {}: {err}", path.display()),
+        }
+    }
     fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
         let mut entries: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
@@ -175,7 +189,7 @@ pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
                 out.push((format!("{rel}/"), Vec::new()));
                 walk(base, &path, out);
             } else {
-                out.push((rel, std::fs::read(&path).unwrap()));
+                out.push((rel, read_unless_locked(&path)));
             }
         }
     }

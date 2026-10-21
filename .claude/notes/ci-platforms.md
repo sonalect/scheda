@@ -39,6 +39,18 @@ its release workflow. Manual runs only (`workflow_dispatch`).
   git's default-branch hint, the rustc archives' sha256 (rules_rust knows
   none for 1.99.1).
 
+- Windows packing (a library bug): `packs()` listed a pack by its `.pack`
+  file; a removal that took the `.idx` and left the `.pack` (Windows keeps a
+  file another reader has open) made every later merge fail with `STORAGE`
+  "file not found". A pack without its index is no pack now, and a pack
+  whose index goes during the merge is passed over
+  (`pack::tests::a_pack_file_without_its_index_is_not_merged`, which failed
+  the same way on Linux before the fix).
+- `indexer::tests::a_round_that_fails_or_panics_is_reported_and_tried_again`
+  read the first item of its watch after the write: on a slow machine that
+  item was already the retry's state. With a 500 ms pause the old test hung,
+  the new one passes.
+
 ## Measurements
 
 Four local cores (`taskset -c 0-3`), Bazel build, one test alone:
@@ -63,6 +75,26 @@ and `scheda_test` time out at 300 s, `integration_thin_test` takes 145 s.
 Not the disk: `reads::tests::the_first_document_of_a_big_collection_…`
 writes `BIG = 100_000` files and commits them with git.
 
-## Open for the owner
+## Known, not fixed (each waits for the owner)
 
-Listed in the session's report; record each decision here when taken.
+- `VaultInfo.path` on Windows is the verbatim form `\\?\C:\…` of
+  `canonicalize` (`open_flags_reach_the_library` in the CLI tests).
+- The CLI does not link with Cargo on Windows: esaxx-rs (tokenizers, from
+  model2vec-rs, both of its tokenizer features) builds with
+  `.static_crt(true)`, `/MT`, against `/MD` of mimalloc and the rest
+  (LNK2038). Bazel links it only because the toolchain's `/MD` comes after
+  esaxx's `/MT` in the compile line.
+- `rust_doc_test` of rules_rust (the legacy runner; the compiled one needs
+  a nightly toolchain) does not link doc tests on Windows: LNK1181 on a
+  relative sysroot path (`//rust/blocking:blocking_doc_test`).
+- macOS and Windows run the volume tests many times slower than Linux:
+  `scheda_thin_test` and `integration_test` time out at 300 s on macOS,
+  every Rust suite on windows-amd64; the Cargo unit tests take 1002 s on
+  windows-arm64.
+- `aspect_rules_py` 1.12.1 (the Sonalect fork) does not know the `abi3t`
+  tag of uv 0.11.3+ locks: eight DEBUG warnings per run (cryptography's
+  cp315 wheels, skipped, which 3.14 does not use anyway).
+- Bazel's DEBUG advice to pin each `git_override` by `commit` instead of
+  `tag` (eight repositories).
+- The CI starts by hand only; release automation as in protocontract is not
+  done.

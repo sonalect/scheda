@@ -248,10 +248,7 @@ jobs:
           if [[ "${RUNNER_OS}" != "Windows" ]]; then
             tests+=(//python:lint //python:vuln)
           fi
-          # The timeout warnings name each test whose size does not fit its
-          # run time on this runner.
-          bazel test //... --keep_going --test_output=errors \
-            --test_verbose_timeout_warnings "${tests[@]}"
+          bazel test //... --keep_going --test_output=errors "${tests[@]}"
 
       # Stopped before the caches are saved, so nothing writes them then.
       - name: Stop Bazel
@@ -332,7 +329,7 @@ jobs:
           cargo clippy --locked --workspace --all-targets --all-features
           cargo clippy --locked -p scheda --all-targets --no-default-features
 
-      # The library first: a failure of the CLI must not hide its results.
+      # The library first; each step runs whatever the one before found.
       - name: Test the library
         # Bazel's test environment (`.bazelrc`): the runner's git
         # configuration must not change outcomes.
@@ -344,9 +341,17 @@ jobs:
           set -euo pipefail
           # Every test binary runs, whatever one before it found.
           cargo test --locked --no-fail-fast -p scheda -p scheda-api -p scheda-blocking --all-features
-          cargo test --locked --no-fail-fast -p scheda --no-default-features
+
+      - name: Test the library without features
+        if: ${{ !cancelled() }}
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: ""
+          GIT_CONFIG_SYSTEM: ""
+        run: cargo test --locked --no-fail-fast -p scheda --no-default-features
 
       - name: Test the CLI
+        if: ${{ !cancelled() }}
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: ""
