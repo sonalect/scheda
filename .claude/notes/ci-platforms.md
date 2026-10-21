@@ -85,6 +85,28 @@ its release workflow. Manual runs only (`workflow_dispatch`).
   locally. `git fast-import` was no help: it inserts tree entries by a
   linear search, 16 s of CPU for 100 000 entries in one folder.
 
+- The `mirror::` failures on windows-amd64 under Bazel: the library reads
+  `init.defaultBranch` through libgit2, which ignores `GIT_CONFIG_*` and
+  searched the machine's configuration; under Bazel (no `HOME`, no
+  `USERPROFILE`) it found Git for Windows' system one, under Cargo the
+  runner's `~/.gitconfig` (`main`, from the workflow). The Vaults went on
+  another branch than the test mirrors' `main`, and a clone checked out
+  nothing. Reproduced on Linux with `HOME` holding `defaultBranch =
+  master`: 22 of 32 `mirror::` tests failed. The integration tests now
+  point libgit2's search paths at an absent file
+  (`common::isolate_library_git`), as the unit tests did.
+- Integration tests compared `VaultInfo.path` with `Path::canonicalize`,
+  the verbatim form on Windows (`common::resolved` gives the plain one).
+- `tables::tests::closing_a_vault_in_the_middle_of_a_slow_embedding_…`
+  counted the embedder's calls from zero; on a loaded runner the round ran
+  on before the test looked. It now counts from the start of `close`.
+- 64 writes queued on one handle wait 60 s at most in all (the turn is
+  FIFO, the deadline runs from the call): fine alone (7 ms a write on D:),
+  ABORTED with four suites at once on windows-amd64 and macos-amd64, as
+  `reads::two_writes_in_one_second_…` found no four writes within one
+  second. CI runs one test binary at a time on macOS and Windows
+  (`--local_test_jobs=1`).
+
 ## Measurements
 
 Four local cores (`taskset -c 0-3`), Bazel build, one test alone:

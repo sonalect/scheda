@@ -183,17 +183,24 @@ jobs:
       # The macOS and Windows runners take several times longer than Linux
       # over the volume suites (git, the file system), past the 300 s of a
       # small test: there each timeout is three times as long, so a run
-      # reports which test failed and why, not a timeout. And a Rust test
+      # reports which test failed and why, not a timeout. A Rust test
       # writes its output, the panic of a failed test included, as it
       # runs: libtest prints captured output only after the whole suite,
-      # which a suite that still times out never reaches.
-      - name: Lengthen the test timeouts
+      # which a suite that still times out never reaches. And one test
+      # binary runs at a time: each Rust suite runs its tests on threads of
+      # its own, and the Lance ones start pools of their own. Four suites at
+      # once on the four cores of windows-amd64 and macos-amd64 made a write
+      # over a hundred times slower than alone (7 ms on Windows): 64 writes
+      # queued on one handle outran the 60 s they may wait, and a test that
+      # needs four writes within one second never got them.
+      - name: Adjust the tests to the runner
         if: runner.os != 'Linux'
         run: |
           set -euo pipefail
           {
             echo "test --test_timeout=900,2700,8100,10800"
             echo "test --test_env=RUST_TEST_NOCAPTURE=1"
+            echo "test --local_test_jobs=1"
           } >> "${HOME}/.bazelrc"
 
       - name: Configure Bazel caches

@@ -31,7 +31,9 @@ API or on-disk format changes bump the minor.
   uses the output base `D:/b`, the shortest that keeps the C sources of
   zstd and libgit2 under `MAX_PATH`, on the runner's local disk (on `C:`,
   its system disk, every flush waits: a unit test of 400 writes took 56 s
-  there and 3 s on `D:`). It still starts by hand
+  there and 3 s on `D:`). On macOS and Windows one test binary runs at a
+  time: four multi-threaded suites at once on four cores slowed a write a
+  hundredfold. It still starts by hand
   (`workflow_dispatch`); only a run on `main` saves the Bazel caches.
 - The third-party crates build with optimizations (`opt-level = 2`) in
   every build of this repository, Bazel's `fastbuild` and Cargo's `dev`
