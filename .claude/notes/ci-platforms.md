@@ -59,6 +59,11 @@ its release workflow. Manual runs only (`workflow_dispatch`).
   `writer::tests::first_loads_at_once_agree_on_one_token` failed 3 of 3
   runs on the old code, Linux.
 
+- `VaultInfo.path` on Windows was the verbatim `\\?\C:\…` of
+  `canonicalize`: the library resolves the Vault with `fs::canonicalize`,
+  which gives the plain form when one exists (the owner's decision, 21
+  October 2026).
+
 ## Measurements
 
 Four local cores (`taskset -c 0-3`), Bazel build, one test alone:
@@ -88,8 +93,6 @@ writes `BIG = 100_000` files and commits them with git.
 - On windows-amd64 under Bazel the `mirror::` integration tests fail, which
   pass under Cargo on windows-arm64: the suite times out before libtest
   prints why.
-- `VaultInfo.path` on Windows is the verbatim form `\\?\C:\…` of
-  `canonicalize` (`open_flags_reach_the_library` in the CLI tests).
 - The CLI does not link with Cargo on Windows: esaxx-rs (tokenizers, from
   model2vec-rs, both of its tokenizer features) builds with
   `.static_crt(true)`, `/MT`, against `/MD` of mimalloc and the rest

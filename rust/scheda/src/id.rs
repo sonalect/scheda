@@ -79,7 +79,9 @@ pub(crate) fn require_document_id(id: &str) -> Result<(), Fault> {
     Ok(())
 }
 
-fn is_windows_device(value: &str) -> bool {
+/// Whether `value`, a file name, names a Windows device (`CON`, `NUL.txt`,
+/// ...): its part before the first dot, in any case.
+pub(crate) fn is_windows_device(value: &str) -> bool {
     let stem = value.split('.').next().unwrap_or(value);
     let upper = stem.to_ascii_uppercase();
     matches!(

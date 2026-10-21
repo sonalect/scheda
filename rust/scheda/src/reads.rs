@@ -831,7 +831,7 @@ mod tests {
         let other = scratch.open().await;
         // The call stops after the list of its paths, before the swap on
         // `HEAD`, as a kill would.
-        hooks::stop_after_list(&scratch.0.canonicalize().unwrap());
+        hooks::stop_after_list(&crate::fs::canonicalize(&scratch.0).unwrap());
         let error = crate::testing::upsert(&vault, "notes", upsert("new.md", "new"))
             .await
             .unwrap_err();

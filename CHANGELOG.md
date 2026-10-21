@@ -50,6 +50,12 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- On Windows, `VaultInfo.path` (and every path the library resolves the
+  Vault to, which it hands to git and to Lance) is the plain `C:\…` or
+  `\\server\share\…`, not the verbatim `\\?\C:\…` that resolving a path
+  gives there. A path that has no plain form stays verbatim: one of 260
+  characters or more, or one with a name Windows reads otherwise (a device
+  such as `CON`, a name that ends with a dot or a space).
 - Two first opens of one clone at once (no `.scheda/writer` yet) share one
   writer identity. Each generated one and replaced the file with it, so the
   two handles of one clone held different identities, and on Windows the

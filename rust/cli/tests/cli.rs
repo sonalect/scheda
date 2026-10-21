@@ -1275,7 +1275,13 @@ fn open_flags_reach_the_library() {
         .unwrap();
     assert_eq!(flag.failure()["code"], json!(error_report(&lib).code));
     let made = run_on(&empty, &["--mode", "create-new", "info"]).json();
-    assert_eq!(made["path"], json!(empty.display().to_string()));
+    // The folder, resolved: on Windows in its plain form, not `\\?\C:\…`.
+    let reported = PathBuf::from(made["path"].as_str().unwrap());
+    assert_eq!(
+        fs::canonicalize(&reported).unwrap(),
+        fs::canonicalize(&empty).unwrap()
+    );
+    assert!(!made["path"].as_str().unwrap().starts_with(r"\\?\"));
     let again = run_on(&empty, &["--mode", "create-new", "info"]);
     let lib = common::runtime()
         .block_on(Scheda.open(opening_with_mode(&empty, OpenMode::OPEN_MODE_CREATE_NEW)))

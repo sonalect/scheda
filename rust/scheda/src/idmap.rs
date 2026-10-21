@@ -686,7 +686,7 @@ mod tests {
             )
             .await
             .unwrap();
-            let path = self.0.canonicalize().unwrap();
+            let path = crate::fs::canonicalize(&self.0).unwrap();
             let deadline = Instant::now() + Duration::from_secs(20);
             while Index::new(&path).read_commit().unwrap().map(State::token)
                 != Some(State::of(&Repos::new(&path).views().unwrap()).token())
@@ -716,7 +716,7 @@ mod tests {
                     .await
                     .unwrap();
             }
-            let path = self.0.canonicalize().unwrap();
+            let path = crate::fs::canonicalize(&self.0).unwrap();
             let deadline = Instant::now() + Duration::from_secs(20);
             while Index::new(&path).read_commit().unwrap().map(State::token)
                 != Some(State::of(&Repos::new(&path).views().unwrap()).token())
@@ -1019,7 +1019,7 @@ mod tests {
         let vault = open(&scratch.0, OpenOptions::default().with_index_poll_ms(10))
             .await
             .unwrap();
-        let path = scratch.0.canonicalize().unwrap();
+        let path = crate::fs::canonicalize(&scratch.0).unwrap();
         let ghost = path.join(".scheda/index/journal/ghost");
         let deadline = Instant::now() + Duration::from_secs(20);
         while !Index::new(&path).root().join("commit").exists() {

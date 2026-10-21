@@ -1421,7 +1421,7 @@ mod tests {
         }
 
         fn canonical(&self) -> PathBuf {
-            self.0.canonicalize().unwrap()
+            crate::fs::canonicalize(&self.0).unwrap()
         }
 
         fn out(&self, args: &[&str]) -> String {

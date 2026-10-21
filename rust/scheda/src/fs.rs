@@ -329,6 +329,59 @@ fn move_file(from: &Path, to: &Path, flags: u32) -> std::io::Result<()> {
     }
 }
 
+/// `fs::canonicalize`, in the form a person writes on Windows: `C:\a\b` or
+/// `\\server\share\a`, not the verbatim `\\?\C:\a\b` the system gives. A
+/// path that has no other form stays verbatim: one of `MAX_PATH` characters
+/// or more, or one with a name Windows reads otherwise without the prefix
+/// (a device such as `CON`, a name that ends with a dot or a space).
+/// Elsewhere it is `fs::canonicalize`.
+pub(crate) fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
+    let canonical = fs::canonicalize(path)?;
+    #[cfg(windows)]
+    let canonical = plain_windows_path(&canonical).unwrap_or(canonical);
+    Ok(canonical)
+}
+
+/// The plain form of the verbatim Windows path `path`, when it has one.
+#[cfg(windows)]
+fn plain_windows_path(path: &Path) -> Option<PathBuf> {
+    use std::path::Prefix;
+
+    /// The characters of a path, its closing NUL counted.
+    const MAX_PATH: usize = 260;
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return None;
+    };
+    let mut plain = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => format!("{}:", char::from(letter)),
+        Prefix::VerbatimUNC(server, share) => {
+            format!(r"\\{}\{}", server.to_str()?, share.to_str()?)
+        }
+        _ => return None,
+    };
+    for component in components {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                let name = name.to_str()?;
+                if name.ends_with(['.', ' ']) || crate::id::is_windows_device(name) {
+                    return None;
+                }
+                plain.push('\\');
+                plain.push_str(name);
+            }
+            _ => return None,
+        }
+    }
+    // The root of a drive is `C:\`; `C:` alone is its current folder.
+    if plain.ends_with(':') {
+        plain.push('\\');
+    }
+    (plain.encode_utf16().count() < MAX_PATH).then(|| PathBuf::from(plain))
+}
+
 /// `path` relative to `vault`, in POSIX form (`a/b/c`). A path outside the
 /// Vault, or one that steps out with `..`, is `INVALID_ARGUMENT`.
 pub(crate) fn rel_of(vault: &Path, path: &Path) -> Result<String, Fault> {
@@ -718,6 +771,46 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let error = atomic_write(&file.join("child"), b"y", false).unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
+    }
+
+    #[test]
+    fn canonicalize_resolves_the_path_and_writes_no_verbatim_prefix() {
+        let scratch = Scratch::new("canonical");
+        let got = super::canonicalize(&scratch.0).unwrap();
+        assert!(got.is_absolute());
+        assert_eq!(
+            std::fs::canonicalize(&got).unwrap(),
+            std::fs::canonicalize(&scratch.0).unwrap()
+        );
+        assert!(
+            !got.to_string_lossy().starts_with(r"\\?\"),
+            "{}",
+            got.display()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_verbatim_windows_path_is_plain_when_it_has_a_plain_form() {
+        let plain = |path: &str| {
+            super::plain_windows_path(Path::new(path)).map(|path| path.display().to_string())
+        };
+        assert_eq!(plain(r"\\?\C:\a\b").as_deref(), Some(r"C:\a\b"));
+        assert_eq!(plain(r"\\?\C:\").as_deref(), Some(r"C:\"));
+        assert_eq!(
+            plain(r"\\?\UNC\server\share\a").as_deref(),
+            Some(r"\\server\share\a")
+        );
+        for verbatim_only in [
+            r"\\?\C:\a\CON",
+            r"\\?\C:\a\nul.txt",
+            r"\\?\C:\a\b.",
+            r"\\?\C:\a\b ",
+        ] {
+            assert_eq!(plain(verbatim_only), None, "{verbatim_only}");
+        }
+        assert_eq!(plain(&format!(r"\\?\C:\{}", "a".repeat(300))), None);
+        assert_eq!(plain(r"C:\a"), None, "not verbatim");
     }
 
     #[test]

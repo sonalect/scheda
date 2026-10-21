@@ -862,8 +862,7 @@ struct Parts {
 /// The parts of the Vault at `path`, which a caller's mirror must be the
 /// origin of; with `scheda`, `.scheda/` is created first.
 fn parts(cx: &Blocking, path: &Path, options: &OpenOptions, scheda: bool) -> Result<Parts, Error> {
-    let canonical = path
-        .canonicalize()
+    let canonical = crate::fs::canonicalize(path)
         .map_err(io)
         .context("resolve the path")?;
     if let Some(mirror) = options.mirror.as_deref() {
@@ -1092,7 +1091,7 @@ mod tests {
     async fn an_existing_vault_opens_with_its_collections_and_a_writer_and_closes() {
         let scratch = Scratch::vault("open");
         let vault = open(&scratch.0, OpenOptions::default()).await.unwrap();
-        assert_eq!(vault.path, scratch.0.canonicalize().unwrap());
+        assert_eq!(vault.path, crate::fs::canonicalize(&scratch.0).unwrap());
         let declarations = step(&vault, |_cx, vault| vault.declarations_now())
             .await
             .unwrap();
