@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-21
+
 ### Added
 
 - `Collection.GetVectors(VectorSelection)`: the vectors the Index holds in
@@ -2908,6 +2910,7 @@ Defects of `0.21.0` that a caller could meet:
 ## Links
 
 - [Unreleased]
+- [0.25.0]
 - [0.24.1]
 - [0.24.0]
 - [0.23.0]
@@ -2968,7 +2971,8 @@ Defects of `0.21.0` that a caller could meet:
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/sonalect/scheda/compare/v0.24.1...HEAD
+[Unreleased]: https://github.com/sonalect/scheda/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/sonalect/scheda/releases/tag/v0.25.0
 [0.24.1]: https://github.com/sonalect/scheda/releases/tag/v0.24.1
 [0.24.0]: https://github.com/sonalect/scheda/releases/tag/v0.24.0
 [0.23.0]: https://github.com/sonalect/scheda/releases/tag/v0.23.0

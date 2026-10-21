@@ -5311,7 +5311,7 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "age",
  "buffa",
@@ -5336,7 +5336,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-api"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "buffa",
  "buffa-types",
@@ -5348,7 +5348,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-blocking"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "protocontract",
  "tokio",
@@ -5356,7 +5356,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-cli"
-version = "0.24.1"
+version = "0.25.0"
 dependencies = [
  "age",
  "buffa-types",
