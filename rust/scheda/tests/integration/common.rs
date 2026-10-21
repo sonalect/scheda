@@ -154,22 +154,10 @@ pub fn vault(dir: &Path) {
 /// Every file below `dir` with its bytes, sorted by path: what a refusal
 /// must leave as it was. The Index (`.scheda/index/`) and the lock of its
 /// rounds (`.scheda/index.lock`) are left out: they are derived, and the
-/// indexer of the handle writes them in the background.
+/// indexer of the handle writes them in the background. On Windows a lock
+/// is mandatory, and the content of a lock file a handle holds cannot be
+/// read: there the lock files of `.scheda/` stand in by their names alone.
 pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
-    /// The bytes of `path`. On Windows a lock is mandatory: a lock file
-    /// another handle holds (`.scheda/commit.lock`) cannot be read, and
-    /// stands in the snapshot by its name alone.
-    fn read_unless_locked(path: &Path) -> Vec<u8> {
-        /// `ERROR_LOCK_VIOLATION`.
-        #[cfg(windows)]
-        const LOCKED: i32 = 33;
-        match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            #[cfg(windows)]
-            Err(err) if err.raw_os_error() == Some(LOCKED) => b"(locked)".to_vec(),
-            Err(err) => panic!("read {}: {err}", path.display()),
-        }
-    }
     fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
         let mut entries: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
@@ -177,19 +165,22 @@ pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
             .collect();
         entries.sort();
         for path in entries {
-            let rel = path
-                .strip_prefix(base)
-                .unwrap()
-                .to_string_lossy()
-                .into_owned();
-            if rel == ".scheda/index" || rel == ".scheda/index.lock" {
+            let rel_path = path.strip_prefix(base).unwrap();
+            // Compared as paths: Windows writes `.scheda\index`.
+            if rel_path == Path::new(".scheda/index") || rel_path == Path::new(".scheda/index.lock")
+            {
                 continue;
             }
+            let rel = rel_path.to_string_lossy().into_owned();
+            let lock_file = rel_path.parent() == Some(Path::new(".scheda"))
+                && rel_path.extension() == Some(std::ffi::OsStr::new("lock"));
             if path.is_dir() {
                 out.push((format!("{rel}/"), Vec::new()));
                 walk(base, &path, out);
+            } else if cfg!(windows) && lock_file {
+                out.push((rel, Vec::new()));
             } else {
-                out.push((rel, read_unless_locked(&path)));
+                out.push((rel, std::fs::read(&path).unwrap()));
             }
         }
     }
