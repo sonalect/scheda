@@ -1702,15 +1702,21 @@ mod tests {
         assert!(two.indexer().status().last_error.as_option().is_none());
     }
 
-    /// The first item of `watch` that reports a failed round. The status
-    /// itself may have moved on by then: the retry starts one poll later.
+    /// The first item of `watch` that reports a failed round, waited for as
+    /// long as [`wait_until`] waits. The status itself may have moved on by
+    /// then: the retry starts one poll later.
     async fn failure(watch: &mut Watch) -> IndexState {
-        loop {
-            let state = watch.next().await.unwrap().unwrap();
-            if state.last_error.is_set() {
-                return state;
+        let wait = async {
+            loop {
+                let state = watch.next().await.unwrap().unwrap();
+                if state.last_error.is_set() {
+                    return state;
+                }
             }
-        }
+        };
+        tokio::time::timeout(Duration::from_secs(20), wait)
+            .await
+            .expect("timed out waiting for a failed round")
     }
 
     #[tokio::test]
@@ -1723,7 +1729,11 @@ mod tests {
         let index = Index::new(&path);
         let before = index.read_commit().unwrap();
         hooks::fail_once(&path);
+        // The first item is the state when it is read: read before the
+        // write, so the item of the failed round comes after it, in order,
+        // and not merged into the state of the retry.
         let mut watch = vault.indexer().watch();
+        watch.next().await.unwrap().unwrap();
         line(&vault, "log", "one").await;
         let state = failure(&mut watch).await;
         let error = state.last_error.as_option().unwrap();
@@ -1737,6 +1747,7 @@ mod tests {
 
         hooks::panic_once(&path);
         let mut watch = vault.indexer().watch();
+        watch.next().await.unwrap().unwrap();
         line(&vault, "log", "two").await;
         let state = failure(&mut watch).await;
         let error = state.last_error.as_option().unwrap();

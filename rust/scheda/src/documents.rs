@@ -1131,6 +1131,9 @@ mod tests {
         scratch.declare("diary", "  standard: {}\n  isolated: true\n");
         scratch.write("notes/ok", b"x");
         scratch.write("notes/ trailing", b"x");
+        // Windows keeps no file named after a device, and libgit2 there
+        // adds none to an index (`core.protectNTFS`).
+        #[cfg(not(windows))]
         scratch.write("notes/nested/CON", b"x");
         scratch.write(".isolated/diary/fine", b"x");
         #[cfg(unix)]
@@ -1161,6 +1164,9 @@ mod tests {
         ];
         if cfg!(not(unix)) {
             expected.retain(|(_, path)| !path.contains("link"));
+        }
+        if cfg!(windows) {
+            expected.retain(|(_, path)| !path.ends_with("/CON"));
         }
         let mut got = codes_and_paths(&problems);
         got.sort_by(|a, b| a.1.cmp(&b.1));

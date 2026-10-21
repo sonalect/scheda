@@ -50,6 +50,14 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- On Windows, packing a repository no longer fails with `STORAGE` ("The
+  system cannot find the file specified") after a merge of packs. Windows
+  keeps a file another reader has open: the removal of a merged pack could
+  take its index and leave its pack file, and every later merge took that
+  file for a pack and failed to read its index, so the writes that pack
+  failed. A pack file without its index is now no pack (git writes the pack
+  file of a new pack before its index, so it is left in place), and a pack
+  whose index goes between the listing and the merge is passed over.
 - The Rust targets build with Bazel on macOS x86_64 and Windows arm64.
   The crate hub `scheda_cargo` took the default platform list of
   `rules_rust`, which has neither, so every crate was incompatible there
@@ -61,7 +69,12 @@ API or on-disk format changes bump the minor.
   which the workspace's `warnings = "deny"` turns into errors. The CLI
   test that writes to `/dev/full` runs on Linux only, the one system with
   that device. The tests write the `file://` URL of a mirror as Windows
-  needs it (`file:///C:/…`), not `file://` before the path.
+  needs it (`file:///C:/…`), not `file://` before the path. On Windows the
+  check test writes no file named `CON`, which Windows does not keep and
+  libgit2 there adds to no index. The indexer test of a failed round reads
+  its watch before the write, so on a slow machine the item of the failure
+  is not merged into the state of the retry, and gives up after 20 s
+  instead of waiting for ever.
 
 ## [0.24.0] - 2026-10-21
 

@@ -128,9 +128,16 @@ pub(crate) fn pack_if_due(git: &Repository, limits: &Limits, stored: u64) -> Res
             .collect();
     }
     let mut members: Vec<Oid> = loose.iter().map(|(id, _)| *id).collect();
-    for stem in &merging {
-        members.extend(index_ids(&pack_dir.join(format!("{stem}.idx")))?);
+    // A pack whose index went since the listing was removed by another hand
+    // (a person's `git gc`): nothing of it is left to merge.
+    let mut indexed = Vec::with_capacity(merging.len());
+    for stem in merging {
+        if let Some(ids) = index_ids(&pack_dir.join(format!("{stem}.idx")))? {
+            members.extend(ids);
+            indexed.push(stem);
+        }
     }
+    let merging = indexed;
     let set: HashSet<Oid> = members.iter().copied().collect();
     if set.is_empty() {
         return Ok(false);
@@ -241,13 +248,17 @@ fn read_dir_if_there(dir: &Path) -> Result<Option<fs::ReadDir>, Fault> {
 }
 
 /// The packs in `pack_dir` that a merge may take, each as its name
-/// (`pack-{hash}`) and the size of its pack file: not those a `.keep` file
-/// protects.
+/// (`pack-{hash}`) and the size of its pack file: those with an index, as a
+/// reader finds them, and not those a `.keep` file protects. A pack file
+/// without its index is no pack: Windows leaves one when the removal of a
+/// merged pack takes the index of a pack file another reader has open, and
+/// git writes the pack file of a new pack before its index.
 fn packs(pack_dir: &Path) -> Result<Vec<(String, u64)>, Fault> {
     let Some(entries) = read_dir_if_there(pack_dir)? else {
         return Ok(Vec::new());
     };
     let mut found = Vec::new();
+    let mut indexed = HashSet::new();
     let mut kept = HashSet::new();
     for entry in entries {
         let entry = entry.map_err(io)?;
@@ -255,21 +266,28 @@ fn packs(pack_dir: &Path) -> Result<Vec<(String, u64)>, Fault> {
         let Some(name) = name.to_str() else { continue };
         if let Some(stem) = name.strip_suffix(".pack") {
             found.push((stem.to_owned(), entry.metadata().map_err(io)?.len()));
+        } else if let Some(stem) = name.strip_suffix(".idx") {
+            indexed.insert(stem.to_owned());
         } else if let Some(stem) = name.strip_suffix(".keep") {
             kept.insert(stem.to_owned());
         }
     }
-    found.retain(|(stem, _)| !kept.contains(stem));
+    found.retain(|(stem, _)| indexed.contains(stem) && !kept.contains(stem));
     Ok(found)
 }
 
 /// The ids of the objects a pack holds, read from its index (version 2: a
 /// header of 8 bytes, a fan-out table of 256 counters, then the ids, 20
-/// bytes each, in order). The count is the last counter.
-fn index_ids(idx: &Path) -> Result<Vec<Oid>, Fault> {
+/// bytes each, in order). The count is the last counter. `None` when the
+/// index is not there: the pack was removed.
+fn index_ids(idx: &Path) -> Result<Option<Vec<Oid>>, Fault> {
     const HEADER: usize = 8;
     const FANOUT: usize = 256 * 4;
-    let bytes = fs::read(idx).map_err(io)?;
+    let bytes = match fs::read(idx) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(io(err)),
+    };
     let bad = || {
         Fault::new(
             VaultErrorCode::Storage,
@@ -294,7 +312,8 @@ fn index_ids(idx: &Path) -> Result<Vec<Oid>, Fault> {
         .0
         .iter()
         .map(|id| Oid::from_bytes(id).map_err(lib_fault))
-        .collect()
+        .collect::<Result<_, _>>()
+        .map(Some)
 }
 
 /// Removes the files of the pack `stem` from `pack_dir`, its index first:
@@ -387,7 +406,7 @@ mod tests {
 
     use git2::{Oid, Repository, Signature};
 
-    use super::{Limits, loose_objects, pack_if_due, packs};
+    use super::{Limits, index_ids, loose_objects, pack_if_due, packs};
 
     /// A repository in a scratch folder, removed when the test ends.
     struct Scratch(PathBuf);
@@ -576,5 +595,50 @@ mod tests {
         }
         assert!(objects.join("pack").join(format!("{kept}.pack")).is_file());
         assert_readable(&repo, &versions);
+    }
+
+    /// Windows keeps a file another reader has open: the removal of a
+    /// merged pack can take its index and leave its pack file. That file is
+    /// no pack, and a merge passes it over.
+    #[test]
+    fn a_pack_file_without_its_index_is_not_merged() {
+        let scratch = Scratch::new("orphan");
+        let repo = Repository::init(&scratch.0).unwrap();
+        let limits = Limits {
+            loose: 30,
+            bytes: u64::MAX,
+            packs: 2,
+            width: 2,
+        };
+        let mut versions = append(&repo, &limits, 40, 100);
+        let pack_dir = repo.path().join("objects").join("pack");
+        // The smallest pack file, so a merge would take it first.
+        let orphan = "pack-0000000000000000000000000000000000000000";
+        std::fs::write(pack_dir.join(format!("{orphan}.pack")), b"PACK").unwrap();
+        assert!(
+            packs(&pack_dir)
+                .unwrap()
+                .iter()
+                .all(|(stem, _)| stem != orphan)
+        );
+        let mut segment = versions.last().unwrap().clone();
+        for i in 0..200 {
+            segment.extend(noise(2000 + i, 100));
+            commit(&repo, &segment);
+            versions.push(segment.clone());
+            pack_if_due(&repo, &limits, 100).unwrap();
+        }
+        assert_readable(&repo, &versions);
+    }
+
+    /// The index of a pack another hand removed after the listing: no
+    /// objects, and no failure.
+    #[test]
+    fn the_index_of_a_removed_pack_holds_nothing() {
+        let scratch = Scratch::new("removed-index");
+        let gone = scratch
+            .0
+            .join("pack-0000000000000000000000000000000000000000.idx");
+        assert!(index_ids(&gone).unwrap().is_none());
     }
 }

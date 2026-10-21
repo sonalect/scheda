@@ -142,9 +142,17 @@ add scheda --no-default-features` is git plus Documents, without Lance.
 `encrypt` is opt-in. Scheda is async only and needs a tokio runtime in the
 caller (`docs/22`): tokio is a required dependency, there is no `tokio`
 feature, and a blocking caller builds a multi-thread runtime and takes
-`to_sync()` of a reference inside it. Bazel on Debian 13, macOS, and
-Windows amd64 links `index`. GitHub Actions CI for those jobs is currently
-disabled.
+`to_sync()` of a reference inside it.
+
+The GitHub Actions workflow CI (started by hand) builds and tests on
+Linux, macOS, and Windows, each on amd64 and arm64: Bazel on five, Cargo on
+Windows arm64, where Bazel cannot build ring (its build script compiles
+with clang there and gets the cl.exe flags of Bazel's C++ toolchain). On
+Windows, Bazel needs a short output base: cl.exe knows no long paths, and
+the C sources of zstd and libgit2 come to the 259 characters of `MAX_PATH`
+under `C:/b`. Put `startup --output_base=C:/b` in your own `.bazelrc`.
+The third-party crates build with optimizations in every mode, the
+workspace's own crates as the mode says.
 
 ```bash
 bazel build //rust/scheda:scheda
@@ -206,8 +214,7 @@ bazel run //bazel:format        # buildifier -mode=fix
 -p scheda --lib --no-default-features` is the fast loop: no feature, no
 Lance compile. The default feature `index` (Lance) needs `protoc`
 to build (`PROTOC`, or `protoc` on `PATH`); `cargo test -p scheda
---all-features` runs the Index tests too. GitHub
-Actions CI (Bazel) is currently disabled.
+--all-features` runs the Index tests too.
 `cargo build --release` uses thin LTO, one codegen unit, and symbol strip.
 
 Optional Cargo-only **static CRT** CLI. Bazel and default Cargo stay

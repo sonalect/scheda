@@ -1,0 +1,68 @@
+# CI on six platforms
+
+Work on the branch `ci-six-platforms` (21 October 2026), after the
+repository went public: `.github/workflows/ci.yml` on Linux, macOS, and
+Windows, each on amd64 and arm64, as `../protocontract-buffa.rs` does in
+its release workflow. Manual runs only (`workflow_dispatch`).
+
+## What runs where
+
+- Bazel (`bazel build //...`, `bazel test //...`, every test named):
+  linux-amd64 (`ubuntu-26.04`), linux-arm64 (`ubuntu-26.04-arm`),
+  macos-amd64 (`macos-26-intel`), macos-arm64 (`macos-26`), windows-amd64
+  (`windows-2025`).
+- Cargo (clippy, the library's tests, then the CLI's): windows-arm64
+  (`windows-11-arm`). Bazel cannot build ring there: ring's build script
+  switches to clang on Windows arm64, and rules_rust hands every build
+  script the cl.exe `CFLAGS` of the C++ toolchain; `build_script_env` only
+  appends to `CFLAGS`, and `build_script_use_cc_toolchain = "off"` sets
+  `CC` to rules_rust's `no_cc.exe`. Lance needs ring (lance-namespace's
+  REST client, not optional).
+
+## Found and fixed on the branch
+
+- crate_universe's default platform list has no `x86_64-apple-darwin` and
+  no `aarch64-pc-windows-msvc`: every Rust target was silently incompatible
+  there (`supported_platform_triples` in `rust.MODULE.bazel`).
+- Windows: Unix-only imports and `rel_posix` were unused (deny warnings);
+  cl.exe hits `MAX_PATH` on zstd-sys's
+  `dictBuilder\..\compress\zstd_compress_internal.h` (266 characters under
+  `--output_user_root=C:/b`, 257 on amd64 and 259 on arm64 under
+  `--output_base=C:/b`, the limit); LNK4315 from rules_cc's `fastbuild`
+  feature (`build:windows --features=-fastbuild`); test mirrors' URLs were
+  `file://C:\…` (`file_url` in the test helpers).
+- `/dev/full` is Linux-only (`another_stdout_failure_is_storage`).
+- Lance unoptimized trains IVF_PQ many times slower: the deps now build
+  with `opt-level = 2` (`.bazelrc` `per_crate_rustc_flag`, Cargo
+  `[profile.dev.package."*"]`).
+- CI hygiene: Android/JAVA variables left pointing at removed toolchains,
+  git's default-branch hint, the rustc archives' sha256 (rules_rust knows
+  none for 1.99.1).
+
+## Measurements
+
+Four local cores (`taskset -c 0-3`), Bazel build, one test alone:
+
+| Test | deps opt 0 | deps opt 2 |
+| - | - | - |
+| `search::on_lance::a_search_through_the_vector_index_…` | 34.4 s | 5.8 s |
+| `texts::on_lance::a_search_through_the_index_of_the_texts_…` | 23.2 s | 0.95 s |
+
+CI, `//rust/scheda:integration_test` (run 4 is deps opt 2):
+
+| Platform | run 2/3 | run 4 |
+| - | - | - |
+| linux-amd64 | 164–199 s | 76 s |
+| linux-arm64 | over 180 s, deadlines missed | 59 s |
+
+Cold Bazel build on linux-amd64: job 19 min with deps opt 0, 31 min with
+opt 2 (critical path 21 min).
+
+macOS arm64 (run 3, test files already on a RAM disk): `scheda_thin_test`
+and `scheda_test` time out at 300 s, `integration_thin_test` takes 145 s.
+Not the disk: `reads::tests::the_first_document_of_a_big_collection_…`
+writes `BIG = 100_000` files and commits them with git.
+
+## Open for the owner
+
+Listed in the session's report; record each decision here when taken.

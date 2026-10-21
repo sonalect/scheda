@@ -342,15 +342,16 @@ jobs:
           GIT_CONFIG_SYSTEM: ""
         run: |
           set -euo pipefail
-          cargo test --locked -p scheda -p scheda-api -p scheda-blocking --all-features
-          cargo test --locked -p scheda --no-default-features
+          # Every test binary runs, whatever one before it found.
+          cargo test --locked --no-fail-fast -p scheda -p scheda-api -p scheda-blocking --all-features
+          cargo test --locked --no-fail-fast -p scheda --no-default-features
 
       - name: Test the CLI
         env:
           GIT_CONFIG_NOSYSTEM: "1"
           GIT_CONFIG_GLOBAL: ""
           GIT_CONFIG_SYSTEM: ""
-        run: cargo test --locked -p scheda-cli
+        run: cargo test --locked --no-fail-fast -p scheda-cli
 
       - name: Disk space
         if: always()
