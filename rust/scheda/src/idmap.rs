@@ -625,12 +625,9 @@ pub(crate) fn check_journal_id_maps(
 /// Whether `path` is a segment file directly in the journal directory
 /// `dir` (with its trailing `/`).
 fn in_collection(path: &str, dir: &str) -> bool {
-    path.strip_prefix(dir).is_some_and(|rest| {
-        !rest.is_empty()
-            && !rest.contains('/')
-            && !rest.starts_with('.')
-            && rest.ends_with(".jsonl")
-    })
+    path.strip_prefix(dir)
+        .and_then(crate::layout::file_in_labels)
+        .is_some_and(|rest| !rest.is_empty() && !rest.starts_with('.') && rest.ends_with(".jsonl"))
 }
 
 #[cfg(test)]

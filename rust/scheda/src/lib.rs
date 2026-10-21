@@ -43,6 +43,7 @@ mod index;
 mod indexer;
 mod isolated;
 mod journal;
+mod layout;
 mod marker;
 mod mirror;
 mod pack;

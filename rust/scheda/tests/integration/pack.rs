@@ -243,6 +243,9 @@ fn copy_dir(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), target).unwrap();
         }
     }
+    // `create_dir_all` makes the folder with the umask's mode; the Vault's
+    // owner-only folders must keep theirs, or `Check` reports the copy.
+    std::fs::set_permissions(to, std::fs::metadata(from).unwrap().permissions()).unwrap();
 }
 
 #[test]

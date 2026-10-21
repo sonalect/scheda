@@ -1746,7 +1746,7 @@ pub(crate) mod on_lance {
     /// The Documents of `notes` the commit of `HEAD` of the Vault at `path`
     /// holds.
     fn stored_notes(path: &Path) -> u64 {
-        crate::probe::git_out(path, &["ls-tree", "--name-only", "HEAD", "notes/"])
+        crate::probe::git_out(path, &["ls-tree", "-r", "--name-only", "HEAD", "notes/"])
             .lines()
             .filter(|line| !line.ends_with(".collection.yaml"))
             .count() as u64

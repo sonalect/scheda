@@ -42,6 +42,19 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- The folder of a standard collection holds at most 64 entries. A folder of
+  more than 64 entries (Document files and id folders) is split into
+  folders named `_<hex>` by the bytes of the ids, only where the ids are
+  dense; below 65 it is flat again. The same Documents always give the same
+  tree, whatever order or clone wrote them, so a write costs the same at a
+  million Documents as at a hundred, and two clones that wrote different
+  Documents join into one tree. A write and a batch lay out the folders on
+  the paths of their ids, and a pull joins the Documents of standard
+  collections by id. A read finds a Document whatever the layout: flat, in
+  `_<hex>` folders, or in a tree made by hand. In a Vault with files, the
+  files move with the layout. A folder made by hand that does not follow
+  the rule is made canonical by the next write that touches it. `History`
+  of a Document the layout moved has no new version.
 - A write, a batch of Documents, and the join of a pull each store their
   objects (the blobs, the trees on their paths, and the commit) as exactly
   one pack, complete on disk before the branch moves. Nothing is left as a

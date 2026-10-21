@@ -34,7 +34,7 @@ use crate::id::{require_document_id, require_slug};
 use crate::journal::LinesState;
 use crate::repo::{CommitInfo, NodeKind, Snap};
 use crate::vault::Vault;
-use crate::{check, isolated, stored};
+use crate::{check, stored};
 
 /// A stream of Documents: what `Collection.GetMany` returns, before the
 /// gate wraps it. Pull it with [`next`](Self::next), giving the Vault it
@@ -228,7 +228,6 @@ impl Vault {
             .snapshot(decl.repo())
             .context("Collection.History")?;
         let mut stream = HistoryStream {
-            rel: isolated::vault_rel(&decl, &id),
             snap,
             decl,
             id,
@@ -314,7 +313,10 @@ impl DocumentStream {
                     let Some(blob) = state.blob() else {
                         return Ok(None);
                     };
-                    return self.walked_document(vault, id, blob).map(Some);
+                    let Some(rel) = state.path().map(str::to_owned) else {
+                        return Ok(None);
+                    };
+                    return self.walked_document(vault, id, blob, &rel).map(Some);
                 }
                 Source::Lines {
                     state,
@@ -354,7 +356,13 @@ impl DocumentStream {
 
     /// The Document of a file the walk has reached: its blob id is known
     /// from the tree, so no path is looked up again.
-    fn walked_document(&self, vault: &Vault, id: String, blob: Oid) -> Result<Document, Error> {
+    fn walked_document(
+        &self,
+        vault: &Vault,
+        id: String,
+        blob: Oid,
+        rel: &str,
+    ) -> Result<Document, Error> {
         let document = self
             .opener()
             .keys(id.clone())
@@ -362,12 +370,8 @@ impl DocumentStream {
         if !self.include_raw {
             return Ok(document);
         }
-        let rel = isolated::vault_rel(&self.decl, &id);
-        let stored = self
-            .snap
-            .blob(blob)
-            .map_err(|fault| fault.with_path(&rel))?;
-        let plain = documents::unseal(&self.decl, stored, vault.encryption(), &rel)?;
+        let stored = self.snap.blob(blob).map_err(|fault| fault.with_path(rel))?;
+        let plain = documents::unseal(&self.decl, stored, vault.encryption(), rel)?;
         Ok(document.with_raw(plain))
     }
 }
@@ -423,7 +427,7 @@ impl Opener<'_> {
                     .with_revision(revision)
             }));
         }
-        let node = self.snap.lookup(&isolated::vault_rel(self.decl, &id))?;
+        let node = documents::node_of(self.snap, self.decl, &id)?;
         Ok(node
             .filter(|node| node.kind == NodeKind::File)
             .map(|node| self.keys(id).with_revision(node.id.to_string())))
@@ -451,8 +455,6 @@ pub(crate) struct HistoryStream {
     snap: Snap,
     decl: Declaration,
     id: String,
-    /// The Vault-relative path of the Document file.
-    rel: String,
     heap: BinaryHeap<Pending>,
     seen: HashSet<Oid>,
     done: bool,
@@ -517,12 +519,19 @@ impl HistoryStream {
 
     /// The id of the blob that holds the Document in the tree `tree`, `None`
     /// when the tree holds no file there.
-    fn blob_in(&self, tree: Oid) -> Result<Option<Oid>, Fault> {
+    ///
+    /// The Document is found through the layout, so a version where it sat
+    /// flat and one where it sat under layout folders are the same
+    /// Document; the path is where this tree holds it.
+    fn blob_in(&self, tree: Oid) -> Result<Option<(Oid, String)>, Fault> {
+        let Some(path) = documents::locate_in(&self.snap, tree, &self.decl, &self.id)? else {
+            return Ok(None);
+        };
         Ok(self
             .snap
-            .lookup_in(tree, &self.rel)?
+            .lookup_in(tree, &path)?
             .filter(|node| node.kind == NodeKind::File)
-            .map(|node| node.id))
+            .map(|node| (node.id, path)))
     }
 
     fn step(&mut self, vault: &Vault) -> Result<Option<DocumentHistoryEntry>, Error> {
@@ -532,13 +541,14 @@ impl HistoryStream {
                 parents.push((*parent, self.snap.commit_info(*parent)?));
             }
             let here = self.blob_in(info.tree)?;
+            let here_blob = here.as_ref().map(|(blob, _)| *blob);
             let mut written = if parents.is_empty() {
                 here.is_some()
             } else {
                 true
             };
             for (parent, parent_info) in parents {
-                if written && self.blob_in(parent_info.tree)? == here {
+                if written && self.blob_in(parent_info.tree)?.map(|(blob, _)| blob) == here_blob {
                     written = false;
                 }
                 if self.seen.insert(parent) {
@@ -558,7 +568,7 @@ impl HistoryStream {
     fn entry(
         &self,
         vault: &Vault,
-        blob: Option<Oid>,
+        blob: Option<(Oid, String)>,
         commit: Oid,
         info: &CommitInfo,
     ) -> Result<DocumentHistoryEntry, Error> {
@@ -576,13 +586,13 @@ impl HistoryStream {
             entry = entry.with_note(note);
         }
         let raw = match blob {
-            Some(blob) => {
+            Some((blob, rel)) => {
                 entry = entry.with_revision(blob.to_string());
                 let stored = self
                     .snap
                     .blob(blob)
-                    .map_err(|fault| fault.with_path(&self.rel))?;
-                documents::unseal(&self.decl, stored, vault.encryption(), &self.rel)?
+                    .map_err(|fault| fault.with_path(&rel))?;
+                documents::unseal(&self.decl, stored, vault.encryption(), &rel)?
             }
             None => Vec::new(),
         };

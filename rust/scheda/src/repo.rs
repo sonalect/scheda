@@ -26,6 +26,7 @@ use scheda_api::v1::VaultErrorCode;
 
 use crate::error::{Fault, lib_fault};
 use crate::isolated;
+use crate::layout::{self, Descent};
 
 /// How many idle repositories a pool keeps. A call that finds the pool
 /// empty opens one more; one handed back to a full pool is closed.
@@ -1025,6 +1026,101 @@ impl Snap {
             }
             if node.kind != NodeKind::Dir {
                 return Ok(None);
+            }
+            tree = repo.find_tree(node.id).map_err(lib_fault)?;
+        }
+        Ok(None)
+    }
+
+    /// The physical path of the entry for the Document `id` in the collection
+    /// folder `dir`, in the commit of this snapshot. See
+    /// [`locate_in`](Self::locate_in).
+    pub(crate) fn locate(&self, dir: &str, id: &str) -> Result<Option<String>, Fault> {
+        match self.tree() {
+            Some(root) => self.locate_in(root, dir, id),
+            None => Ok(None),
+        }
+    }
+
+    /// The physical, Vault-relative path of the entry for the Document `id`
+    /// in the collection folder `dir` of the tree `root`, whether the
+    /// Document sits flat or under layout folders (`_<hex>`), however the
+    /// tree was split. `None` when the folder, or a name on the way, is not
+    /// there.
+    ///
+    /// Each `/`-separated component of `id` is looked up in its own folder:
+    /// by name first, else by descent through the label folders. The cost
+    /// is the folders on the way, never the whole collection. What the path
+    /// names (a file, a folder, a link) is for the caller to see with
+    /// [`lookup_in`](Self::lookup_in); a link or a file on the way of an id
+    /// with more components gives the path the id would have below it, so
+    /// that lookup reports it as it does for any path.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_ARGUMENT` when `dir`, or a folder on the way to it, is a
+    /// symbolic link; the library's failure when an object cannot be read.
+    pub(crate) fn locate_in(
+        &self,
+        root: Oid,
+        dir: &str,
+        id: &str,
+    ) -> Result<Option<String>, Fault> {
+        let Some(repo) = self.repository() else {
+            return Ok(None);
+        };
+        let dir = dir.trim_end_matches('/');
+        let Some(start) = self.lookup_in(root, dir)? else {
+            return Ok(None);
+        };
+        if start.kind != NodeKind::Dir {
+            return Ok(None);
+        }
+        let mut tree = repo.find_tree(start.id).map_err(lib_fault)?;
+        let mut at = dir.to_owned();
+        let parts: Vec<&str> = id.split('/').collect();
+        for (n, part) in parts.iter().enumerate() {
+            // The bytes of the name that the label folders passed so far
+            // account for.
+            let mut passed: Vec<u8> = Vec::new();
+            let node = loop {
+                if let Some(entry) = tree.get_name(part) {
+                    break Node::of(&entry);
+                }
+                let labels: Vec<String> = tree
+                    .iter()
+                    .filter(|entry| Node::of(entry).kind == NodeKind::Dir)
+                    .filter_map(|entry| entry.name().ok().map(str::to_owned))
+                    .filter(|name| layout::decode(name).is_some())
+                    .collect();
+                let dirs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                let Descent::Into(label) =
+                    layout::descend(&passed, &[] as &[&[u8]], &dirs, part.as_bytes())
+                else {
+                    return Ok(None);
+                };
+                let (Some(added), Some(child)) = (
+                    layout::decode(label),
+                    tree.get_name(label).map(|entry| entry.id()),
+                ) else {
+                    return Ok(None);
+                };
+                passed.extend(added);
+                at.push('/');
+                at.push_str(label);
+                tree = repo.find_tree(child).map_err(lib_fault)?;
+            };
+            at.push('/');
+            at.push_str(part);
+            if n + 1 == parts.len() {
+                return Ok(Some(at));
+            }
+            if node.kind != NodeKind::Dir {
+                for rest in &parts[n + 1..] {
+                    at.push('/');
+                    at.push_str(rest);
+                }
+                return Ok(Some(at));
             }
             tree = repo.find_tree(node.id).map_err(lib_fault)?;
         }

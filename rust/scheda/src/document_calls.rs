@@ -703,7 +703,19 @@ impl crate::vault::Vault {
             changes = with_ignore;
         }
         let before = snap.commit();
-        let head = lock.commit_in(&snap, &message(&first_note, &trailers), &changes)?;
+        // The Documents of a standard collection are laid out by the rule
+        // of the layout; journals, singletons, and the collections of the
+        // nested repository keep their paths.
+        let laid: Vec<String> = if repo == Repo::Main {
+            declarations
+                .iter()
+                .filter(|decl| decl.kind() == Kind::Standard && !decl.isolated())
+                .map(|decl| isolated::vault_rel(decl, ""))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let head = lock.commit_laid(&snap, &message(&first_note, &trailers), &changes, &laid)?;
         let pushable = repo == Repo::Main && head != before;
         if repo == Repo::Main {
             self.remember(head, declarations)?;

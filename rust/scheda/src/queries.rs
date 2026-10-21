@@ -1026,8 +1026,8 @@ pub(crate) fn read_document(
         document.raw = Some(found.into_plain());
         return Ok(Some(document));
     }
-    let path = documents::path_of(decl, id)?;
-    let Some(node) = snap.lookup(&path)? else {
+    documents::path_of(decl, id)?;
+    let Some(node) = documents::node_of(snap, decl, id)? else {
         return Ok(None);
     };
     document.revision = Some(node.id.to_string());

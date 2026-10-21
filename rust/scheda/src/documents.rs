@@ -22,7 +22,8 @@ use crate::collection::{Declaration, Declarations, Kind};
 use crate::error::{Context, Error, Fault, lib_fault};
 use crate::id::{require_document_id, require_slug};
 use crate::isolated;
-use crate::repo::{NodeKind, Snap, Views};
+use crate::layout::{self, Step};
+use crate::repo::{Node, NodeKind, Snap, Views};
 
 fn invalid(message: impl Into<String>) -> Fault {
     Fault::new(VaultErrorCode::InvalidArgument, message)
@@ -61,6 +62,33 @@ pub(crate) fn path_of(decl: &Declaration, id: &str) -> Result<String, Fault> {
         }
     }
     Ok(isolated::vault_rel(decl, id))
+}
+
+/// The physical, Vault-relative path of the entry for Document `id` in the
+/// commit of `snap`, wherever the layout put it: flat in the collection
+/// folder or under label folders. `None` when the commit holds no entry for
+/// it. The id is not checked; see [`Snap::locate_in`].
+pub(crate) fn locate(snap: &Snap, decl: &Declaration, id: &str) -> Result<Option<String>, Fault> {
+    snap.locate(&isolated::vault_rel(decl, ""), id)
+}
+
+/// [`locate`] in the tree `root` of the repository of `snap`.
+pub(crate) fn locate_in(
+    snap: &Snap,
+    root: Oid,
+    decl: &Declaration,
+    id: &str,
+) -> Result<Option<String>, Fault> {
+    snap.locate_in(root, &isolated::vault_rel(decl, ""), id)
+}
+
+/// The entry for Document `id` in the commit of `snap`, found through the
+/// layout: `None` when the commit holds none.
+pub(crate) fn node_of(snap: &Snap, decl: &Declaration, id: &str) -> Result<Option<Node>, Fault> {
+    match locate(snap, decl, id)? {
+        Some(rel) => snap.lookup(&rel),
+        None => Ok(None),
+    }
 }
 
 /// Reads the file at the Vault-relative `rel`: `None` when the commit holds
@@ -153,7 +181,10 @@ pub(crate) fn read_found(
     if decl.kind() == Kind::Singleton && decl.singleton_id() != Some(id) {
         return Ok(None);
     }
-    let rel = path_of(decl, id)?;
+    path_of(decl, id)?;
+    let Some(rel) = locate(snap, decl, id)? else {
+        return Ok(None);
+    };
     let Some(blob) = snap.read(&rel)? else {
         return Ok(None);
     };
@@ -309,19 +340,35 @@ fn seal<'a>(
     Err(no_encrypt(decl).with_path(rel))
 }
 
+/// What an entry of a directory the walk has listed is.
+#[derive(Debug, PartialEq, Eq)]
+enum EntryKind {
+    /// A Document file.
+    File,
+    /// A directory of the id: its name is a component of the ids below it.
+    IdDir,
+    /// A layout folder: its name only says which names it holds.
+    Label,
+}
+
 /// One entry of a directory the walk has listed.
 #[derive(Debug)]
 struct Entry {
     name: String,
-    dir: bool,
+    kind: EntryKind,
     /// The id of the blob or of the tree.
     node: Oid,
 }
 
-/// A directory the walk is inside: the id prefix of its entries (empty, or
-/// ending in `/`) and the entries not yet visited.
+/// A directory the walk is inside: where it is, the id prefix of its
+/// entries (empty, or ending in `/`) and the entries not yet visited.
 struct Level {
+    /// The Vault-relative path of the directory.
+    rel: String,
     prefix: String,
+    /// The bytes of a name that the layout folders from the last id
+    /// directory down to this one account for.
+    passed: Vec<u8>,
     entries: std::vec::IntoIter<Entry>,
 }
 
@@ -379,11 +426,10 @@ impl<'a> Walk<'a> {
     /// without checking the id again: `None` when the walk is at no
     /// Document.
     pub(crate) fn read(&self) -> Result<Option<Vec<u8>>, Fault> {
-        let Some(id) = self.state.id() else {
+        let Some(rel) = self.state.path() else {
             return Ok(None);
         };
-        let rel = isolated::vault_rel(self.decl, id);
-        read_file(self.snap, &rel, self.decl, self.encryption)
+        read_file(self.snap, rel, self.decl, self.encryption)
     }
 }
 
@@ -396,6 +442,8 @@ pub(crate) struct WalkState {
     current: Option<String>,
     /// The id of the blob of the current Document.
     current_blob: Option<Oid>,
+    /// The physical Vault-relative path of the file of the current Document.
+    current_path: Option<String>,
     /// Ids up to and including this one are passed over.
     after: Option<String>,
     started: bool,
@@ -411,6 +459,7 @@ impl WalkState {
             stack: Vec::new(),
             current: None,
             current_blob: None,
+            current_path: None,
             after: None,
             started: false,
             done: false,
@@ -434,13 +483,15 @@ impl WalkState {
     ) -> Result<Option<&str>, Fault> {
         self.current = None;
         self.current_blob = None;
+        self.current_path = None;
         if self.done {
             return Ok(None);
         }
         match self.advance(snap, decl) {
-            Ok(Some((id, blob))) => {
+            Ok(Some((id, blob, path))) => {
                 self.current = Some(id);
                 self.current_blob = Some(blob);
+                self.current_path = Some(path);
                 Ok(self.current.as_deref())
             }
             Ok(None) => {
@@ -465,21 +516,33 @@ impl WalkState {
         self.current_blob
     }
 
-    /// Whether the ids below the directory whose ids begin with `prefix`
-    /// (it ends in `/`) all sort at or before the id the walk starts after.
+    /// The physical Vault-relative path of the file of the Document the walk
+    /// is at: where the layout put it.
+    pub(crate) fn path(&self) -> Option<&str> {
+        self.current_path.as_deref()
+    }
+
+    /// Whether the ids that begin with `prefix` all sort at or before the id
+    /// the walk starts after.
     fn passed(&self, prefix: &str) -> bool {
         self.after
             .as_deref()
             .is_some_and(|after| after > prefix && !after.starts_with(prefix))
     }
 
-    fn advance(&mut self, snap: &Snap, decl: &Declaration) -> Result<Option<(String, Oid)>, Fault> {
+    fn advance(
+        &mut self,
+        snap: &Snap,
+        decl: &Declaration,
+    ) -> Result<Option<(String, Oid, String)>, Fault> {
         if decl.kind() == Kind::Singleton {
             return self.advance_singleton(snap, decl);
         }
         if !self.started {
             self.started = true;
-            if let Some(level) = Self::list(snap, decl, String::new())? {
+            let root = isolated::vault_rel(decl, "");
+            let root = root.trim_end_matches('/');
+            if let Some(level) = Self::list(snap, root.to_owned(), String::new(), Vec::new())? {
                 self.stack.push(level);
             }
         }
@@ -491,21 +554,47 @@ impl WalkState {
                 self.stack.pop();
                 continue;
             };
-            let id = format!("{}{}", level.prefix, entry.name);
-            if entry.dir {
-                let prefix = format!("{id}/");
-                if self.passed(&prefix) {
-                    continue;
+            let rel = format!("{}/{}", level.rel, entry.name);
+            match entry.kind {
+                EntryKind::Label => {
+                    let Some(added) = layout::decode(&entry.name) else {
+                        continue;
+                    };
+                    let mut passed = level.passed.clone();
+                    passed.extend(added);
+                    let prefix = level.prefix.clone();
+                    // Every id below begins with the id prefix and the
+                    // bytes of the labels; a label of bytes that are not
+                    // text holds no id.
+                    let Ok(names) = std::str::from_utf8(&passed) else {
+                        continue;
+                    };
+                    if self.passed(&format!("{prefix}{names}")) {
+                        continue;
+                    }
+                    if let Some(level) = Self::list(snap, rel, prefix, passed)? {
+                        self.stack.push(level);
+                    }
                 }
-                if let Some(level) = Self::list(snap, decl, prefix)? {
-                    self.stack.push(level);
+                EntryKind::IdDir => {
+                    let prefix = format!("{}{}/", level.prefix, entry.name);
+                    if self.passed(&prefix) {
+                        continue;
+                    }
+                    if let Some(level) = Self::list(snap, rel, prefix, Vec::new())? {
+                        self.stack.push(level);
+                    }
                 }
-            } else if self
-                .after
-                .as_deref()
-                .is_none_or(|after| id.as_str() > after)
-            {
-                return Ok(Some((id, entry.node)));
+                EntryKind::File => {
+                    let id = format!("{}{}", level.prefix, entry.name);
+                    if self
+                        .after
+                        .as_deref()
+                        .is_none_or(|after| id.as_str() > after)
+                    {
+                        return Ok(Some((id, entry.node, rel)));
+                    }
+                }
             }
         }
     }
@@ -514,7 +603,7 @@ impl WalkState {
         &mut self,
         snap: &Snap,
         decl: &Declaration,
-    ) -> Result<Option<(String, Oid)>, Fault> {
+    ) -> Result<Option<(String, Oid, String)>, Fault> {
         if self.started {
             return Ok(None);
         }
@@ -527,7 +616,9 @@ impl WalkState {
         }
         let rel = isolated::vault_rel(decl, id);
         match snap.lookup(&rel) {
-            Ok(Some(node)) if node.kind == NodeKind::File => Ok(Some((id.to_owned(), node.id))),
+            Ok(Some(node)) if node.kind == NodeKind::File => {
+                Ok(Some((id.to_owned(), node.id, rel)))
+            }
             Ok(_) => Ok(None),
             // The file itself is a symlink: not a Document.
             Err(fault) if fault.path() == Some(rel.as_str()) => Ok(None),
@@ -535,15 +626,25 @@ impl WalkState {
         }
     }
 
-    /// Lists the tree `prefix` below the collection directory (`""` is the
-    /// collection directory itself), sorted for the walk. `None` when the
-    /// commit holds no such tree or nothing the walk visits in it.
-    fn list(snap: &Snap, decl: &Declaration, prefix: String) -> Result<Option<Level>, Fault> {
-        let rel = isolated::vault_rel(decl, &prefix);
+    /// Lists the directory `rel`, sorted for the walk: the directory of the
+    /// ids that begin with `prefix` (`""` is the collection directory
+    /// itself), or a layout folder in it that holds the names that begin
+    /// with the bytes `passed`. `None` when the commit holds no such
+    /// directory or nothing the walk visits in it.
+    ///
+    /// A directory whose name is a label (`_` and hex) is a layout folder,
+    /// whoever made it; its files are Documents of the collection.
+    fn list(
+        snap: &Snap,
+        rel: String,
+        prefix: String,
+        passed: Vec<u8>,
+    ) -> Result<Option<Level>, Fault> {
         let Some(children) = snap.list(&rel)? else {
             return Ok(None);
         };
         let mut entries = Vec::new();
+        let mut labels = Vec::new();
         for child in children {
             if child.name.starts_with('.') {
                 continue;
@@ -553,34 +654,59 @@ impl WalkState {
                     if require_slug("id", &child.name).is_ok() {
                         entries.push(Entry {
                             name: child.name,
-                            dir: true,
+                            kind: EntryKind::IdDir,
+                            node: child.node.id,
+                        });
+                    } else if layout::decode(&child.name).is_some() {
+                        labels.push(Entry {
+                            name: child.name,
+                            kind: EntryKind::Label,
                             node: child.node.id,
                         });
                     }
                 }
                 NodeKind::File => entries.push(Entry {
                     name: child.name,
-                    dir: false,
+                    kind: EntryKind::File,
                     node: child.node.id,
                 }),
                 NodeKind::Link | NodeKind::Other => {}
             }
         }
-        if entries.is_empty() {
+        if entries.is_empty() && labels.is_empty() {
             return Ok(None);
         }
         // A directory sorts as its name and a `/`: every id below it begins
         // with that, so the order of the walk is the order of the whole ids.
-        entries.sort_by_cached_key(|entry| {
-            if entry.dir {
+        let key = |entry: &Entry| {
+            if entry.kind == EntryKind::IdDir {
                 format!("{}/", entry.name)
             } else {
                 entry.name.clone()
             }
-        });
+        };
+        entries.sort_by_cached_key(key);
+        let keys: Vec<String> = entries.iter().map(key).collect();
+        let key_bytes: Vec<&[u8]> = keys.iter().map(|key| key.as_bytes()).collect();
+        let names: Vec<String> = labels.iter().map(|label| label.name.clone()).collect();
+        let label_names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut plain = entries.into_iter();
+        let mut ordered = Vec::with_capacity(keys.len() + labels.len());
+        for step in layout::walk_order(&passed, &key_bytes, &label_names) {
+            match step {
+                Step::Entry(_) => ordered.extend(plain.next()),
+                Step::Dir(name) => {
+                    if let Some(at) = labels.iter().position(|label| label.name == name) {
+                        ordered.push(labels.swap_remove(at));
+                    }
+                }
+            }
+        }
         Ok(Some(Level {
+            rel,
             prefix,
-            entries: entries.into_iter(),
+            passed,
+            entries: ordered.into_iter(),
         }))
     }
 }
@@ -648,7 +774,10 @@ fn check_files(
     let mut walk = Walk::new(snap, decl, encryption)?;
     while walk.next_id()?.is_some() {
         let Some(id) = walk.id() else { break };
-        let rel = isolated::vault_rel(decl, id);
+        let rel = walk
+            .state
+            .path()
+            .map_or_else(|| isolated::vault_rel(decl, id), str::to_owned);
         if let Err(fault) = path_of(decl, id) {
             problems.push(problem_of(&fault.with_path(rel)));
             continue;

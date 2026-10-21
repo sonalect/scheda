@@ -1640,3 +1640,55 @@ fn an_attach_does_not_check_the_initial_branch() {
         }
     });
 }
+
+#[test]
+fn two_clones_that_wrote_different_documents_into_one_folder_join_into_the_canonical_tree() {
+    both(|| async {
+        let scratch = Scratch::new("layout-join");
+        let texts: Vec<(String, String)> = (0..63)
+            .map(|n| (format!("n{n:03}.md"), format!("seed {n}")))
+            .collect();
+        let docs: Vec<(&str, &str)> = texts
+            .iter()
+            .map(|(id, text)| (id.as_str(), text.as_str()))
+            .collect();
+        let mirror = seeded_as(&scratch, "m", &docs, OpenOptions::default()).await;
+        let (path_a, a) = bare_clone_of(&scratch, "a", &mirror).await;
+        let (path_b, b) = bare_clone_of(&scratch, "b", &mirror).await;
+        // `a` takes the folder to 65 Documents, so it splits; `b` takes it to
+        // 64, flat, and removes one.
+        put(&a, "n063.md", "a").await;
+        put(&a, "n064.md", "a").await;
+        put(&b, "n100.md", "b").await;
+        collection(&b, "notes")
+            .await
+            .delete(
+                scheda::v1::DocumentDeletion::default()
+                    .with_id("n001.md")
+                    .with_note("remove"),
+            )
+            .await
+            .unwrap();
+        mirror_of(&a).await.sync(Empty::default()).await.unwrap();
+        mirror_of(&b).await.sync(Empty::default()).await.unwrap();
+        mirror_of(&a).await.sync(Empty::default()).await.unwrap();
+        assert_eq!(head(&path_a), mirror_head(&mirror));
+        assert_eq!(head(&path_b), mirror_head(&mirror));
+        let parents = git_out(&path_b, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+        assert_eq!(parents.split_whitespace().count(), 3, "a join: {parents}");
+        let mut ids: std::collections::BTreeSet<String> =
+            texts.iter().map(|(id, _)| id.clone()).collect();
+        ids.remove("n001.md");
+        ids.extend(["n063.md", "n064.md", "n100.md"].map(str::to_owned));
+        let (tree_a, files) = crate::layout::physical(&path_a, "notes");
+        assert_eq!(files, crate::layout::canonical(&ids));
+        assert_eq!(crate::layout::physical(&path_b, "notes").0, tree_a);
+        for vault in [&a, &b] {
+            assert_eq!(read(vault, "n063.md").await, "a");
+            assert_eq!(read(vault, "n100.md").await, "b");
+            assert_eq!(read(vault, "n002.md").await, "seed 2");
+            assert!(is_absent(vault, "n001.md").await);
+        }
+        git(&mirror, &["fsck", "--no-progress", "--strict"]);
+    });
+}

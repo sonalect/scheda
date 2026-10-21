@@ -239,16 +239,27 @@ pub(crate) fn list_segments(snap: &Snap, decl: &Declaration) -> Result<Vec<PathB
         Some(_) => {}
     }
     let mut out = Vec::new();
-    for child in snap.list(dir)?.unwrap_or_default() {
-        if child.name.starts_with('.') || !child.name.ends_with(".jsonl") {
-            continue;
-        }
-        if child.node.kind == NodeKind::File {
-            out.push(PathBuf::from(format!("{dir}/{}", child.name)));
-        }
-    }
+    collect_segments(snap, dir, &mut out)?;
     out.sort_by_cached_key(|path| segment_order(path));
     Ok(out)
+}
+
+/// Adds the segment files of the folder `dir` to `out`, and those of the
+/// layout folders (`_<hex>`) below it, however a person or a mirror split
+/// them.
+fn collect_segments(snap: &Snap, dir: &str, out: &mut Vec<PathBuf>) -> Result<(), Fault> {
+    for child in snap.list(dir)?.unwrap_or_default() {
+        match child.node.kind {
+            NodeKind::File if !child.name.starts_with('.') && child.name.ends_with(".jsonl") => {
+                out.push(PathBuf::from(format!("{dir}/{}", child.name)));
+            }
+            NodeKind::Dir if crate::layout::decode(&child.name).is_some() => {
+                collect_segments(snap, &format!("{dir}/{}", child.name), out)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// The Vault-relative form of a segment path, with `/` on every platform.

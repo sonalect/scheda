@@ -49,9 +49,9 @@ use crate::commit::{Held, branch_of};
 use crate::error::{self, Context, Error, Fault, lib_fault, redact_remote_text};
 use crate::gate::Pass;
 use crate::pack::Overlay;
-use crate::repo::{self, Repo};
+use crate::repo::{self, Repo, Snap};
 use crate::vault::Vault;
-use crate::{collection, git, marker, stored};
+use crate::{collection, git, isolated, layout, marker, stored};
 
 /// The message of the commit that joins the history of the mirror to the
 /// Vault's.
@@ -199,7 +199,16 @@ impl Vault {
         let mem = overlay.repo();
         let ours_commit = mem.find_commit(ours).map_err(lib_fault)?;
         let theirs_commit = mem.find_commit(theirs).map_err(lib_fault)?;
-        let (tree, paths) = join_trees(mem, &ours_commit, &theirs_commit).context("join")?;
+        // The Documents of standard collections are joined by id and laid
+        // out by the rule, so both clones end with the same tree.
+        let laid: Vec<String> = self
+            .declarations_in(&snap)?
+            .iter()
+            .filter(|decl| decl.kind() == collection::Kind::Standard && !decl.isolated())
+            .map(|decl| isolated::vault_rel(decl, ""))
+            .collect();
+        let (tree, paths) =
+            join_trees(mem, &ours_commit, &theirs_commit, Some((&snap, &laid))).context("join")?;
         let tree = mem.find_tree(tree).map_err(lib_fault)?;
         let who = lock.signature()?;
         let joined = mem
@@ -436,6 +445,16 @@ fn short_name(reference: &str) -> &str {
 /// only `theirs` changed since their merge base, and the paths `theirs`
 /// changed. Histories with no merge base join as if the base were empty.
 ///
+/// With `laid`, the folders (each ends in `/`) and the snapshot of `ours`,
+/// the folders hold Documents laid out by the rule of the layout.
+///
+/// The changes below such a folder are read by Document id: a Document that
+/// sits at another path on one side, with the same blob, is not a change
+/// (the layout moved it). Each Document that only `theirs` changed is put
+/// into, or removed from, the folder of `ours` through the layout, so the
+/// folder is canonical for its Documents; the paths returned are those
+/// whose trees are new.
+///
 /// # Errors
 ///
 /// `MIRROR_CONFLICT` naming the paths both sides changed differently, or
@@ -445,6 +464,7 @@ fn join_trees(
     git: &Repository,
     ours: &Commit<'_>,
     theirs: &Commit<'_>,
+    laid: Option<(&Snap, &[String])>,
 ) -> Result<(Oid, Vec<String>), Error> {
     let base = match git.merge_base(ours.id(), theirs.id()) {
         Ok(id) => Some(
@@ -457,15 +477,17 @@ fn join_trees(
     };
     let ours_tree = ours.tree().map_err(lib_fault)?;
     let theirs_tree = theirs.tree().map_err(lib_fault)?;
-    let mine = changes(git, base.as_ref(), &ours_tree)?;
-    let others = changes(git, base.as_ref(), &theirs_tree)?;
-    let mut conflicts: Vec<&str> = Vec::new();
+    let dirs = laid.map_or(&[][..], |(_, dirs)| dirs);
+    let (mine, mine_docs) = by_id(dirs, changes(git, base.as_ref(), &ours_tree)?);
+    let (others, other_docs) = by_id(dirs, changes(git, base.as_ref(), &theirs_tree)?);
+    let mut conflicts: Vec<String> = Vec::new();
     let mut update = TreeUpdateBuilder::new();
-    for (path, state) in &others {
+    let mut paths: Vec<String> = Vec::new();
+    for (path, (_, state)) in &others {
         match mine.get(path) {
-            Some(same) if same == state => {}
-            Some(_) => conflicts.push(path),
-            None if state.is_some() && collides(&ours_tree, path)? => conflicts.push(path),
+            Some((_, same)) if same == state => {}
+            Some(_) => conflicts.push(path.clone()),
+            None if state.is_some() && collides(&ours_tree, path)? => conflicts.push(path.clone()),
             None => match state {
                 Some((id, mode)) => {
                     update.upsert(path, *id, *mode);
@@ -475,13 +497,120 @@ fn join_trees(
                 }
             },
         }
+        paths.push(path.clone());
+    }
+    // The Documents only `theirs` changed, by folder.
+    let mut puts: BTreeMap<&str, Vec<(String, layout::Op)>> = BTreeMap::new();
+    if let Some((snap, _)) = laid {
+        for ((dir, id), state) in &other_docs {
+            let named = format!("{dir}{id}");
+            match mine_docs.get(&(dir.clone(), id.clone())) {
+                Some(same) if same == state => continue,
+                Some(_) => {
+                    conflicts.push(named);
+                    continue;
+                }
+                None => {}
+            }
+            let located = snap.locate_in(ours_tree.id(), dir, id)?;
+            let op = match state {
+                Some((blob, mode)) => {
+                    if let Some(at) = &located
+                        && collides(&ours_tree, at)?
+                    {
+                        conflicts.push(named);
+                        continue;
+                    }
+                    layout::Op::Put(layout::Entry {
+                        id: *blob,
+                        mode: i32::from(*mode),
+                    })
+                }
+                None => match located {
+                    Some(at)
+                        if snap
+                            .lookup_in(ours_tree.id(), &at)?
+                            .is_some_and(|node| node.kind == repo::NodeKind::File) =>
+                    {
+                        layout::Op::Remove
+                    }
+                    _ => continue,
+                },
+            };
+            puts.entry(dir.as_str()).or_default().push((id.clone(), op));
+        }
     }
     if !conflicts.is_empty() {
-        return Err(conflict(&conflicts).into());
+        let named: Vec<&str> = conflicts.iter().map(String::as_str).collect();
+        return Err(conflict(&named).into());
+    }
+    if let Some((snap, _)) = laid {
+        for (dir, docs) in puts {
+            let folder = dir.trim_end_matches('/');
+            let before = snap
+                .lookup_in(ours_tree.id(), folder)?
+                .filter(|node| node.kind == repo::NodeKind::Dir)
+                .map(|node| node.id);
+            let after = layout::apply(snap, git, ours_tree.id(), dir, docs)?;
+            if after == before {
+                continue;
+            }
+            paths.extend(
+                layout::moved(git, folder, before, after)?
+                    .into_iter()
+                    .map(|file| file.path),
+            );
+            match after {
+                Some(id) => {
+                    update.upsert(folder, id, FileMode::Tree);
+                }
+                None => {
+                    update.remove(folder);
+                }
+            }
+        }
     }
     let tree = update.create_updated(git, &ours_tree).map_err(lib_fault)?;
-    let paths = others.keys().cloned().collect();
     Ok((tree, paths))
+}
+
+/// The state of a file before and after a side changed it.
+type Pair = (State, State);
+
+/// Splits what a side changed into the paths outside the folders of `laid`,
+/// and the Documents inside them by (folder, id), each with the state it was
+/// left in. A Document the layout moved has the same state before and
+/// after, and is no change.
+fn by_id(
+    laid: &[String],
+    changed: BTreeMap<String, Pair>,
+) -> (BTreeMap<String, Pair>, BTreeMap<(String, String), State>) {
+    let mut plain = BTreeMap::new();
+    let mut docs: BTreeMap<(String, String), Pair> = BTreeMap::new();
+    for (path, pair) in changed {
+        let found = laid.iter().find_map(|dir| {
+            let below = path.strip_prefix(dir.as_str())?;
+            // A dotfile at the root of the folder is not a Document.
+            (!below.is_empty() && !below.starts_with('.')).then_some((dir, below))
+        });
+        match found {
+            Some((dir, below)) => {
+                let id = layout::id_of(below);
+                let entry = docs.entry((dir.clone(), id)).or_insert((None, None));
+                entry.0 = entry.0.or(pair.0);
+                entry.1 = entry.1.or(pair.1);
+            }
+            None => {
+                plain.insert(path, pair);
+            }
+        }
+    }
+    let net = docs
+        .into_iter()
+        .filter(|(_, (old, new))| old != new)
+        .map(|(key, (_, new))| (key, new))
+        .collect();
+    (plain, net)
 }
 
 fn conflict(paths: &[&str]) -> Fault {
@@ -501,18 +630,19 @@ fn conflict(paths: &[&str]) -> Fault {
 }
 
 /// What `tree` changed since `base` (nothing, when it is `None`), path by
-/// path, for every file the two differ in.
+/// path, for every file the two differ in: the state before and after.
 fn changes(
     git: &Repository,
     base: Option<&Tree<'_>>,
     tree: &Tree<'_>,
-) -> Result<BTreeMap<String, State>, Error> {
+) -> Result<BTreeMap<String, Pair>, Error> {
     let diff = git
         .diff_tree_to_tree(base, Some(tree), None)
         .map_err(lib_fault)?;
     let mut out = BTreeMap::new();
     for delta in diff.deltas() {
         let deleted = delta.status() == git2::Delta::Deleted;
+        let added = delta.status() == git2::Delta::Added;
         let file = if deleted {
             delta.old_file()
         } else {
@@ -525,8 +655,9 @@ fn changes(
             )
             .into());
         };
-        let state = (!deleted).then(|| (file.id(), file.mode()));
-        out.insert(path.to_owned(), state);
+        let new = (!deleted).then(|| (file.id(), file.mode()));
+        let old = (!added).then(|| (delta.old_file().id(), delta.old_file().mode()));
+        out.insert(path.to_owned(), (old, new));
     }
     Ok(out)
 }
@@ -891,7 +1022,7 @@ mod tests {
             repo.find_commit(ours).unwrap(),
             repo.find_commit(theirs).unwrap(),
         );
-        let tree = super::join_trees(&repo, &ours, &theirs).unwrap().0;
+        let tree = super::join_trees(&repo, &ours, &theirs, None).unwrap().0;
         assert_eq!(names(&repo, tree), ["both", "keep", "mine", "theirs"]);
     }
 
@@ -909,7 +1040,7 @@ mod tests {
         let theirs = repo
             .find_commit(commit_on(&repo, Some(&base), &[("a", Some("file"))]))
             .unwrap();
-        let error = super::join_trees(&repo, &ours, &theirs).unwrap_err();
+        let error = super::join_trees(&repo, &ours, &theirs, None).unwrap_err();
         assert!(error.is(VaultErrorCode::MirrorConflict));
         // Two histories with no common commit join as if the base were empty.
         let left = repo
@@ -926,12 +1057,12 @@ mod tests {
                 &[("same", Some("1")), ("r", Some("r"))],
             ))
             .unwrap();
-        let tree = super::join_trees(&repo, &left, &right).unwrap().0;
+        let tree = super::join_trees(&repo, &left, &right, None).unwrap().0;
         assert_eq!(names(&repo, tree), ["l", "r", "same"]);
         let clash = repo
             .find_commit(commit_on(&repo, None, &[("same", Some("2"))]))
             .unwrap();
-        let error = super::join_trees(&repo, &left, &clash).unwrap_err();
+        let error = super::join_trees(&repo, &left, &clash, None).unwrap_err();
         assert!(error.is(VaultErrorCode::MirrorConflict));
     }
 }

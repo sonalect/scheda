@@ -59,6 +59,7 @@ use crate::error::{Context, Error, Fault};
 use crate::generation::{self, Commit, Declared, Embedder, Generation, Replaced, Retired};
 use crate::id::require_document_id;
 use crate::index::{Counts, State};
+use crate::layout;
 use crate::ports::{EmbedderPort, Installed, ProjectorPort};
 use crate::repo::{NodeKind, Repo, Repos, Snap};
 use crate::store::{Column, Embedding, Embeddings, Kind, Row, Shape, Table, Vectors, texts_name};
@@ -1140,9 +1141,14 @@ pub(crate) fn journal_order(segment: &std::path::Path, line: usize) -> String {
 
 /// The id of the Document at the Vault-relative `path` of `decl`, when the
 /// path is one of its Document files.
+///
+/// The path is the physical one: layout folders (`_<hex>`) on the way are
+/// not part of the id.
 fn document_id(decl: &Declaration, path: &str) -> Option<String> {
     let dir = isolated::vault_rel(decl, "");
-    let id = path.strip_prefix(&dir)?;
+    let below = path.strip_prefix(&dir)?;
+    let id = layout::id_of(below);
+    let id = id.as_str();
     match decl.kind() {
         CollectionKind::Standard => require_document_id(id).ok().map(|()| id.to_owned()),
         CollectionKind::Singleton => (decl.singleton_id() == Some(id)).then(|| id.to_owned()),
@@ -1153,9 +1159,9 @@ fn document_id(decl: &Declaration, path: &str) -> Option<String> {
 /// Whether the Vault-relative `path` is a segment of the journal `decl`.
 fn is_segment(decl: &Declaration, path: &str) -> bool {
     let dir = isolated::vault_rel(decl, "");
-    path.strip_prefix(&dir).is_some_and(|name| {
-        !name.contains('/') && !name.starts_with('.') && name.ends_with(".jsonl")
-    })
+    path.strip_prefix(&dir)
+        .and_then(layout::file_in_labels)
+        .is_some_and(|name| !name.starts_with('.') && name.ends_with(".jsonl"))
 }
 
 /// The blob of the file at `path` in `snap`, when it is a regular file.
@@ -1179,10 +1185,9 @@ fn tree_files(snap: &Snap, decl: &Declaration) -> Result<BTreeMap<String, Oid>, 
         return Ok(out);
     }
     let mut walk = WalkState::new(snap, decl)?;
-    while let Some(id) = walk.next_id(snap, decl)? {
-        let path = isolated::vault_rel(decl, id);
-        if let Some(blob) = walk.blob() {
-            out.insert(path, blob);
+    while walk.next_id(snap, decl)?.is_some() {
+        if let (Some(path), Some(blob)) = (walk.path(), walk.blob()) {
+            out.insert(path.to_owned(), blob);
         }
     }
     Ok(out)
@@ -1288,6 +1293,26 @@ fn list(
                 });
             }
         }
+    }
+    // A Document moved between folders is a file gone at one path and a
+    // file there at another: the id is still there, so it is not gone.
+    let present: std::collections::HashSet<&str> = items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Document { id, .. } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect();
+    let gone: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(
+            |(_, item)| matches!(item, Item::DocumentGone { id } if present.contains(id.as_str())),
+        )
+        .map(|(at, _)| at)
+        .collect();
+    for at in gone.into_iter().rev() {
+        items.remove(at);
     }
     Ok(items)
 }

@@ -9,6 +9,7 @@ mod collections;
 mod consumer;
 mod documents;
 mod index;
+mod layout;
 mod mirror;
 mod objects;
 mod open;

@@ -37,6 +37,7 @@
 //! nested repository, any other to the Vault's, and recovery settles each
 //! against the `HEAD` and the index of its own repository.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions as FileOptions, TryLockError as FileLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -55,6 +56,7 @@ use crate::fs::{Flock, atomic_write, reject_symlinks, restrict_dir};
 use crate::index::State;
 use crate::indexer::Signal;
 use crate::isolated;
+use crate::layout;
 use crate::pack::{self, Merges, Overlay};
 pub(crate) use crate::repo::Repo;
 use crate::repo::{NodeKind, Repos, Snap};
@@ -513,6 +515,29 @@ impl WriteLock<'_> {
         message: &str,
         changes: &[Change],
     ) -> Result<Option<Oid>, Error> {
+        self.commit_laid(snap, message, changes, &[])
+    }
+
+    /// [`commit_in`](Self::commit_in) for a write that holds Documents of
+    /// standard collections. `laid` are the collection folders of the
+    /// repository, each ending in `/`: a change whose path is below one of
+    /// them names a Document by its id, and is stored where the layout of
+    /// the folder puts it. Other paths are stored as they are.
+    ///
+    /// The files of the work tree follow the trees: a Document the layout
+    /// moves is a file removed at one path and written at another, and both
+    /// are noted in the lock file and settled; so is a folder left empty.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`commit_in`](Self::commit_in).
+    pub(crate) fn commit_laid(
+        &self,
+        snap: &Snap,
+        message: &str,
+        changes: &[Change],
+        laid: &[String],
+    ) -> Result<Option<Oid>, Error> {
         let vault = self.root();
         let no_files = self.committer.no_files;
         let repo = snap.repo();
@@ -538,18 +563,29 @@ impl WriteLock<'_> {
         // are merged first, and a merge that fails fails the write here.
         pack::make_room(git, vault, &self.committer.pack)?;
         let branch = branch_of(git)?;
-        let Some((new, blobs)) = build_commit(
+        let Some(Built {
+            id: new,
+            blobs,
+            moved,
+        }) = build_commit(
             git,
             snap,
             message,
             changes,
             &self.committer.identity.signature()?,
+            laid,
         )?
         else {
             return Ok(old);
         };
+        let laid = if snap.tree().is_some() { laid } else { &[] };
         if !no_files {
-            let paths: Vec<&str> = changes.iter().map(Change::path).collect();
+            let mut paths: Vec<&str> = changes
+                .iter()
+                .map(Change::path)
+                .filter(|path| laid_in(laid, path).is_none())
+                .collect();
+            paths.extend(moved.iter().map(|file| file.path.as_str()));
             write_list(self.held.flock.file(), &paths)?;
         }
         #[cfg(test)]
@@ -568,7 +604,16 @@ impl WriteLock<'_> {
         self.committer.signal.moved();
         // A Vault without a work tree has no file to settle and no index.
         if !no_files {
-            let plan = plan_of(snap, changes, &blobs)?;
+            let mut plan = plan_of(snap, changes, &blobs, laid)?;
+            plan.extend(moved.iter().map(|file| Item {
+                rel: &file.path,
+                want: file.want.map(|(id, executable)| Want {
+                    id,
+                    mode: FileMode::of(executable),
+                    bytes: None,
+                }),
+                was: file.was,
+            }));
             // The commit is stored. A git index that cannot be brought up
             // now (a person's `git add` holds its lock) keeps the note, and
             // the next holder of the lock does it.
@@ -751,26 +796,89 @@ pub(crate) fn branch_of(git: &Repository) -> Result<String, Error> {
 /// What a commit stored for a path: the id of the blob of a `Put`.
 type Blobs = Vec<Option<Oid>>;
 
+/// What [`build_commit`] made.
+struct Built {
+    /// The commit.
+    id: Oid,
+    /// The blob of each change in the order of the changes (`None` for a
+    /// removal).
+    blobs: Blobs,
+    /// The files of the work tree that the layout of the Documents added,
+    /// moved, or removed.
+    moved: Vec<layout::Moved>,
+}
+
+/// The folder of `laid` that `path` is below.
+fn laid_in<'a>(laid: &'a [String], path: &str) -> Option<&'a str> {
+    laid.iter()
+        .map(String::as_str)
+        .find(|dir| path.len() > dir.len() && path.starts_with(dir))
+}
+
 /// Builds the blobs, the tree on the tree of `snap`, and the commit, and
 /// stores exactly those objects as one pack, complete on disk before this
-/// returns. Returns the id of the commit with the blob ids in the order of
-/// `changes` (`None` for a removal); `None` when the tree does not change,
-/// with nothing stored.
+/// returns. Returns the commit with the blob ids in the order of `changes`
+/// (`None` for a removal); `None` when the tree does not change, with
+/// nothing stored.
+///
+/// A change below a folder of `laid` is a Document: the folder is laid out
+/// with [`layout::apply`] and its new tree replaces the old one.
 fn build_commit(
     git: &Repository,
     snap: &Snap,
     message: &str,
     changes: &[Change],
     who: &Signature<'_>,
-) -> Result<Option<(Oid, Blobs)>, Error> {
+    laid: &[String],
+) -> Result<Option<Built>, Error> {
     let repo = snap.repo();
+    // An unborn branch has no folder to lay out.
+    let laid = if snap.tree().is_some() { laid } else { &[] };
     let overlay = Overlay::over(git)?;
     let mem = overlay.repo();
     let mut blobs: Blobs = Vec::with_capacity(changes.len());
+    let mut moved: Vec<layout::Moved> = Vec::new();
     let tree = if let Some(old) = snap.tree() {
         let base = mem.find_tree(old).map_err(lib_fault)?;
         let mut update = TreeUpdateBuilder::new();
+        let mut documents: BTreeMap<&str, Vec<(String, layout::Op)>> = BTreeMap::new();
         for change in changes {
+            if let Some(dir) = laid_in(laid, change.path()) {
+                let id = &change.path()[dir.len()..];
+                let located = snap.locate(dir, id)?;
+                let op = match change {
+                    Change::Put { bytes, mode, .. } => {
+                        if let Some(at) = &located {
+                            refuse_collision(snap, at)?;
+                        }
+                        let blob = mem.blob(bytes).map_err(lib_fault)?;
+                        blobs.push(Some(blob));
+                        Some(layout::Op::Put(layout::Entry {
+                            id: blob,
+                            mode: mode.git().into(),
+                        }))
+                    }
+                    Change::Remove { .. } => {
+                        blobs.push(None);
+                        // Removing what the tree does not hold, or a folder,
+                        // is nothing to do.
+                        match &located {
+                            Some(at)
+                                if snap
+                                    .lookup(at)?
+                                    .is_some_and(|node| node.kind == NodeKind::File) =>
+                            {
+                                Some(layout::Op::Remove)
+                            }
+                            _ => None,
+                        }
+                    }
+                };
+                if let Some(op) = op {
+                    documents.entry(dir).or_default().push((id.to_owned(), op));
+                }
+                continue;
+            }
             let inner = repo.inner(change.path())?;
             match change {
                 Change::Put { bytes, mode, path } => {
@@ -785,6 +893,26 @@ fn build_commit(
                         update.remove(inner);
                     }
                     blobs.push(None);
+                }
+            }
+        }
+        for (dir, docs) in documents {
+            let folder = dir.trim_end_matches('/');
+            let before = snap
+                .lookup(folder)?
+                .filter(|node| node.kind == NodeKind::Dir)
+                .map(|node| node.id);
+            let after = layout::apply(snap, mem, old, dir, docs)?;
+            if after == before {
+                continue;
+            }
+            moved.extend(layout::moved(mem, folder, before, after)?);
+            match after {
+                Some(id) => {
+                    update.upsert(repo.inner(folder)?, id, git2::FileMode::Tree);
+                }
+                None => {
+                    update.remove(repo.inner(folder)?);
                 }
             }
         }
@@ -837,11 +965,16 @@ fn build_commit(
         .map_err(lib_fault)?;
     let mut touched: Vec<(&str, Option<Oid>)> = Vec::with_capacity(changes.len());
     for (change, blob) in changes.iter().zip(&blobs) {
-        touched.push((repo.inner(change.path())?, *blob));
+        if laid_in(laid, change.path()).is_none() {
+            touched.push((repo.inner(change.path())?, *blob));
+        }
+    }
+    for file in &moved {
+        touched.push((repo.inner(&file.path)?, file.want.map(|(blob, _)| blob)));
     }
     drop((tree, parent));
     overlay.store(git, id, &touched)?;
-    Ok(Some((id, blobs)))
+    Ok(Some(Built { id, blobs, moved }))
 }
 
 /// `INVALID_ARGUMENT` when `path` would put a file where `snap` holds a
@@ -973,9 +1106,20 @@ enum Mode {
 
 /// The work-tree items of a write, from its changes and the blob ids the
 /// commit stored. `snap` is the state the write was built on.
-fn plan_of<'a>(snap: &Snap, changes: &'a [Change], blobs: &Blobs) -> Result<Vec<Item<'a>>, Error> {
+///
+/// A change below a folder of `laid` is left out: it names a Document, not a
+/// path, and the files it moved are the commit's `moved`.
+fn plan_of<'a>(
+    snap: &Snap,
+    changes: &'a [Change],
+    blobs: &Blobs,
+    laid: &[String],
+) -> Result<Vec<Item<'a>>, Error> {
     let mut plan = Vec::with_capacity(changes.len());
     for (change, blob) in changes.iter().zip(blobs) {
+        if laid_in(laid, change.path()).is_some() {
+            continue;
+        }
         let was = snap
             .lookup(change.path())?
             .filter(|node| node.kind == NodeKind::File)

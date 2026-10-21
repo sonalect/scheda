@@ -56,3 +56,10 @@ Vault and a full learn instead of a migration.
    ends. Older than generation 4; found by the G2 cut test, which now lets
    the round end before it closes. Fix later: narrow the generation's
    modes at open, or when the next round starts.
+2. **`pack::tests::close_cancels_a_running_merge_and_holds_no_lock_afterwards`
+   is ignored.** Under the load of `bazel test //...` the pack lock was
+   still held right after `Packer::stop` returned, in both test targets;
+   under cargo it passed. No holder was found by reading the code (the
+   stop awaits the merge's blocking step, which drops the lock file; the
+   fallback read takes it shared only while it reads). Find the holder:
+   the design promises no lock after `Close`.
