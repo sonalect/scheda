@@ -601,7 +601,6 @@ mod tests {
     };
 
     use crate::commit::hooks;
-    use crate::git::git;
     use crate::repo::blob_reads;
     use crate::testing::{create, create_collection, open, step, upsert_of};
     use crate::vault::Vault;
@@ -727,32 +726,56 @@ mod tests {
 
     #[tokio::test]
     async fn the_first_document_of_a_big_collection_reads_one_blob_and_a_dropped_stream_no_more() {
+        use std::io::Write as _;
+
         let scratch = Scratch::new("lazy-documents");
         let vault = scratch.open().await;
         declare(&vault, "notes").await;
-        let dir = scratch.0.join("notes");
-        for n in 0..BIG {
-            std::fs::write(dir.join(format!("d{n:06}.md")), format!("document {n}")).unwrap();
-        }
-        // One commit with all of them, made with git itself.
-        for args in [
-            &["add", "--all"][..],
-            &[
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.test",
-                "commit",
-                "--quiet",
-                "--message",
-                "the big collection",
-            ][..],
-        ] {
-            let mut cmd = git().current_dir(&scratch.0);
-            for arg in args {
-                cmd = cmd.arg(arg);
+        // One commit with all of them on top of `HEAD`, its objects in one
+        // pack: the library keeps them in memory until it writes them out
+        // as a pack. The reads look at the commit alone, so the work tree
+        // is left as it was. 100 000 files, and as many loose objects from
+        // `git add`, took over ten minutes to write on a Windows CI runner
+        // and two on macOS.
+        {
+            let repo = git2::Repository::open(&scratch.0).unwrap();
+            let odb = repo.odb().unwrap();
+            let memory = odb.add_new_mempack_backend(1000).unwrap();
+            let head = repo.head().unwrap();
+            let parent = head.peel_to_commit().unwrap();
+            let folder = parent
+                .tree()
+                .unwrap()
+                .get_path(std::path::Path::new("notes"))
+                .unwrap()
+                .to_object(&repo)
+                .unwrap()
+                .peel_to_tree()
+                .unwrap();
+            let mut notes = repo.treebuilder(Some(&folder)).unwrap();
+            for n in 0..BIG {
+                let blob = repo.blob(format!("document {n}").as_bytes()).unwrap();
+                notes
+                    .insert(format!("d{n:06}.md"), blob, 0o100_644)
+                    .unwrap();
             }
-            cmd.run().unwrap();
+            let notes = notes.write().unwrap();
+            let mut root = repo.treebuilder(Some(&parent.tree().unwrap())).unwrap();
+            root.insert("notes", notes, 0o040_000).unwrap();
+            let tree = repo.find_tree(root.write().unwrap()).unwrap();
+            let who = git2::Signature::now("Test", "test@example.test").unwrap();
+            let message = "the big collection";
+            let commit = repo
+                .commit(None, &who, &who, message, &tree, &[&parent])
+                .unwrap();
+            let mut pack = git2::Buf::new();
+            memory.dump(&repo, &mut pack).unwrap();
+            let mut writer = odb.packwriter().unwrap();
+            writer.write_all(&pack).unwrap();
+            writer.commit().unwrap();
+            memory.reset().unwrap();
+            repo.reference(head.name().unwrap(), commit, true, message)
+                .unwrap();
         }
 
         // The count of blob reads is of one thread: the whole check is one
