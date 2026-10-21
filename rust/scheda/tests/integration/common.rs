@@ -9,6 +9,7 @@ use std::future::{Future, poll_fn};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::{Command, ExitStatus};
+use std::sync::Once;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -58,6 +59,7 @@ pub struct Scratch {
 impl Scratch {
     /// A new, empty scratch directory.
     pub fn new(name: &str) -> Scratch {
+        isolate_library_git();
         let base = std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
         let root = base.join(format!("scheda-{name}-{}-{n}", std::process::id()));
@@ -73,6 +75,20 @@ impl Scratch {
     }
 }
 
+/// The path the library reports for the Vault at `path`: resolved, and on
+/// Windows in the plain form (`C:\…`), not the verbatim `\\?\C:\…` that
+/// resolving gives there. A scratch directory always has a plain form.
+pub fn resolved(path: &Path) -> PathBuf {
+    let path = path.canonicalize().unwrap();
+    #[cfg(windows)]
+    if let Some(plain) = path.to_str().and_then(|text| text.strip_prefix(r"\\?\"))
+        && !plain.starts_with(r"UNC\")
+    {
+        return PathBuf::from(plain);
+    }
+    path
+}
+
 /// The `file://` URL of the absolute path `path`: `file:///home/a/m.git`,
 /// and on Windows `file:///C:/a/m.git`.
 pub fn file_url(path: &Path) -> String {
@@ -84,10 +100,42 @@ pub fn file_url(path: &Path) -> String {
     }
 }
 
+/// A git configuration file that is not there: git and the library take it
+/// as an empty one.
+fn absent_config() -> PathBuf {
+    std::env::temp_dir().join("scheda-absent-gitconfig")
+}
+
+/// Points the library's search for git configuration files (system, XDG,
+/// global, `ProgramData`) at a file that is not there, once for the
+/// process, before any test opens a Vault: a test must not take the
+/// machine's or the user's `init.defaultBranch`, `core.autocrlf`, and the
+/// rest. The git command line reads `GIT_CONFIG_*` (see [`command`]); the
+/// library reads none of them. On a Windows runner it read the system
+/// configuration of Git for Windows, and the Vaults it made pushed a branch
+/// the test mirrors (`--initial-branch=main`) do not check out.
+pub fn isolate_library_git() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let absent = absent_config();
+        for level in [
+            git2::ConfigLevel::System,
+            git2::ConfigLevel::XDG,
+            git2::ConfigLevel::Global,
+            git2::ConfigLevel::ProgramData,
+        ] {
+            // SAFETY: the library reads its configuration only inside a
+            // Vault, and every test reaches one through these helpers,
+            // which wait here until the paths are set.
+            unsafe { git2::opts::set_search_path(level, &absent) }.unwrap();
+        }
+    });
+}
+
 /// `git args` to run in `dir`, with the user's and the system's git
 /// configuration left out and an identity of its own.
 pub fn command(dir: &Path, args: &[&str]) -> Command {
-    let absent = std::env::temp_dir().join("scheda-absent-gitconfig");
+    let absent = absent_config();
     let mut cmd = Command::new("git");
     cmd.args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])
         .arg("-C")
@@ -282,6 +330,7 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = ()>,
 {
+    isolate_library_git();
     Builder::new_current_thread()
         .enable_all()
         .build()
@@ -357,6 +406,7 @@ pub fn stream_of<T: Send + 'static>(
 /// The request that opens the Vault at `path` with `options` and no port;
 /// a test sets the ports it wants on it.
 pub fn opening(path: &Path, options: OpenOptions) -> VaultOpening {
+    isolate_library_git();
     VaultOpening {
         path: Some(path.to_string_lossy().into_owned()),
         options: options.into(),

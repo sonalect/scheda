@@ -22,8 +22,8 @@ use serde_json::json;
 use tokio::runtime::{Builder, Runtime};
 
 use crate::common::{
-    Scratch, all, both, collection, command, file_url, git, mirror, open, opening, snapshot,
-    stream_of, vault as built_vault, write_waits_for_the_lock,
+    Scratch, all, both, collection, command, file_url, git, mirror, open, opening, resolved,
+    snapshot, stream_of, vault as built_vault, write_waits_for_the_lock,
 };
 
 /// How long a step may take before the test gives up on it.
@@ -141,7 +141,7 @@ async fn round_trip() {
     let info = vault.info(Empty::default()).await.unwrap();
     assert_eq!(
         info.path.as_deref(),
-        Some(path.canonicalize().unwrap().to_str().unwrap())
+        Some(resolved(&path).to_str().unwrap())
     );
     let notes = collection(&vault, "notes").await.unwrap();
     assert_eq!(

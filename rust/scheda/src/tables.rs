@@ -2519,12 +2519,20 @@ mod tests {
         wait_indexed(&vault).await;
         batch(&vault, "notes", notes(40, 0)).await.unwrap();
         wait_until("the embedding", || asked.load(Ordering::SeqCst) >= 2).await;
+        let before = asked.load(Ordering::SeqCst);
         let started = Instant::now();
         vault.close().await.unwrap();
         let took = started.elapsed();
         // The whole round would take 40 portions.
         assert!(took < PORTION * 4, "close took {took:?}");
-        assert!(asked.load(Ordering::SeqCst) < 10);
+        // The portion in flight ends, and close returned before four more
+        // could; none is asked after it. Counted from the start of close,
+        // not from a number: a busy machine can run the round on for a
+        // while before this task looks at it.
+        let after = asked.load(Ordering::SeqCst);
+        assert!(after <= before + 4, "{before} portions, then {after}");
+        tokio::time::sleep(PORTION * 2).await;
+        assert_eq!(asked.load(Ordering::SeqCst), after, "a portion after close");
     }
 
     /// A Projector of Documents of lines: the first is `title` (fts), each

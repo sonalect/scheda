@@ -22,8 +22,8 @@ use scheda::{Error, Scheda};
 use serde_json::json;
 
 use crate::common::{
-    Scratch, both, collection, file_url, mirror, open, opening, snapshot, vault as built_vault,
-    write_waits_for_the_lock,
+    Scratch, both, collection, file_url, mirror, open, opening, resolved, snapshot,
+    vault as built_vault, write_waits_for_the_lock,
 };
 
 /// Opens a Vault as `request` asks.
@@ -118,7 +118,7 @@ fn vault_info_gives_the_path_the_index_path_and_the_writer() {
             .await
             .unwrap();
         let info = vault.info(Empty::default()).await.unwrap();
-        let root = path.canonicalize().unwrap();
+        let root = resolved(&path);
         assert_eq!(info.path.as_deref(), Some(root.to_str().unwrap()));
         assert_eq!(
             info.index_path.as_deref(),

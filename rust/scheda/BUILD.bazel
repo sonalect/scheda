@@ -80,6 +80,7 @@ _INTEGRATION_SRCS = glob(["tests/integration/**/*.rs"])
 
 _INTEGRATION_DEPS = [
     "@scheda_cargo//:buffa-types",
+    "@scheda_cargo//:git2",
     "@scheda_cargo//:protocontract",
     "@scheda_cargo//:serde_json",
     "@scheda_cargo//:tokio",
