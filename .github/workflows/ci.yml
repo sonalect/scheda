@@ -177,6 +177,14 @@ jobs:
           diskutil erasevolume APFS scheda-tests "${device}"
           echo "test --test_tmpdir=/Volumes/scheda-tests/bazel-test" >> "${HOME}/.bazelrc"
 
+      # The macOS and Windows runners take several times longer than Linux
+      # over the volume suites (git, the file system), past the 300 s of a
+      # small test: there each timeout is three times as long, so a run
+      # reports which test failed and why, not a timeout.
+      - name: Lengthen the test timeouts
+        if: runner.os != 'Linux'
+        run: echo "test --test_timeout=900,2700,8100,10800" >> "${HOME}/.bazelrc"
+
       - name: Configure Bazel caches
         run: |
           set -euo pipefail
