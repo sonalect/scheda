@@ -138,12 +138,17 @@ and `scheda_test` time out at 300 s, `integration_thin_test` takes 145 s.
 Not the disk: `reads::tests::the_first_document_of_a_big_collection_…`
 writes `BIG = 100_000` files and commits them with git.
 
-## Known, not fixed (each waits for the owner)
+## State and what is left
 
-- On windows-amd64 under Bazel the `mirror::` integration tests fail, which
-  pass under Cargo on windows-arm64: the suite times out before libtest
-  prints why. CI now sets `RUST_TEST_NOCAPTURE=1` on macOS and Windows, so
-  a panic is in the log even when its suite times out.
+Released in 0.24.1 (21 October 2026); the branch is merged into `main`.
+Run 13 (`39580201442`): the five Bazel platforms green; windows-arm64
+green for the library (clippy, tests with every feature and without),
+red only in the CLI step (esaxx-rs, below). The last commit before the
+release, `/NOIMPLIB /NOEXP` on Windows, has not run on the runners yet.
+CI stays manual (`workflow_dispatch`), the owner's decision.
+
+The owner deferred the rest to a later session (21 October 2026):
+
 - The CLI does not link with Cargo on Windows: esaxx-rs (tokenizers, from
   model2vec-rs, both of its tokenizer features) builds with
   `.static_crt(true)`, `/MT`, against `/MD` of mimalloc and the rest
@@ -151,19 +156,23 @@ writes `BIG = 100_000` files and commits them with git.
   esaxx's `/MT` in the compile line. esaxx-rs 0.1.10 (2023) is its latest
   release, model2vec-rs 0.3.0 its latest, and both of model2vec-rs's
   tokenizer features turn on `tokenizers/esaxx_fast`. Only the CLI depends
-  on it. The owner's decision (21 October 2026): a Sonalect fork of
-  esaxx-rs without `static_crt(true)`, under `[patch.crates-io]` (every
-  crate `/MD` as under Bazel, `cargo install --git` included; Knowqore may
-  meet the same). The owner makes the fork together with the agent; until
-  then the CLI step of windows-arm64 fails at the link.
-- macOS and Windows run the volume tests many times slower than Linux:
-  `scheda_thin_test` and `integration_test` time out at 300 s on macOS,
-  every Rust suite on windows-amd64; the Cargo unit tests take 1002 s on
-  windows-arm64.
+  on it. The owner's decision: a Sonalect fork of esaxx-rs without
+  `static_crt(true)`, under `[patch.crates-io]` (every crate `/MD` as under
+  Bazel, `cargo install --git` included; Knowqore may meet the same). The
+  owner makes the fork together with the agent.
 - `aspect_rules_py` 1.12.1 (the Sonalect fork) does not know the `abi3t`
   tag of uv 0.11.3+ locks: eight DEBUG warnings per run (cryptography's
-  cp315 wheels, skipped, which 3.14 does not use anyway).
+  cp315 wheels, skipped, which 3.14 does not use anyway). Knowqore's
+  `uv.lock` has them too: fix the fork once for both.
 - Bazel's DEBUG advice to pin each `git_override` by `commit` instead of
   `tag` (eight repositories).
-- The CI starts by hand only; release automation as in protocontract is not
-  done.
+- Release automation as in protocontract is not done.
+- A blocking port may be called once after `Close` returned (the
+  protocontract pull above): whether `Close` waits for it, or
+  protocontract starts no item for a reader that is gone.
+- Bazel's note "tests whose specified size is too big" stays: it measures
+  against the default ranges, not `--test_timeout`, so a size right for a
+  workstation is wrong for a runner and the other way round.
+
+Knowqore's plan for the same work: `../knowqore/docs/41-ci-six-platforms.md`
+(written 21 October 2026, not committed there yet).
