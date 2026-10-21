@@ -151,11 +151,11 @@ writes `BIG = 100_000` files and commits them with git.
   esaxx's `/MT` in the compile line. esaxx-rs 0.1.10 (2023) is its latest
   release, model2vec-rs 0.3.0 its latest, and both of model2vec-rs's
   tokenizer features turn on `tokenizers/esaxx_fast`. Only the CLI depends
-  on it. Ways out, for the owner: a Sonalect fork of esaxx-rs without
-  `static_crt(true)` under `[patch.crates-io]` (recommended: every crate
-  `/MD` as under Bazel, `cargo install --git` included), or `+crt-static`
-  for Windows MSVC in `.cargo/config.toml` (a static CRT in Cargo builds
-  only, not in `cargo install`).
+  on it. The owner's decision (21 October 2026): a Sonalect fork of
+  esaxx-rs without `static_crt(true)`, under `[patch.crates-io]` (every
+  crate `/MD` as under Bazel, `cargo install --git` included; Knowqore may
+  meet the same). The owner makes the fork together with the agent; until
+  then the CLI step of windows-arm64 fails at the link.
 - macOS and Windows run the volume tests many times slower than Linux:
   `scheda_thin_test` and `integration_test` time out at 300 s on macOS,
   every Rust suite on windows-amd64; the Cargo unit tests take 1002 s on
