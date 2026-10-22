@@ -2882,6 +2882,278 @@ pub(crate) mod tests {
             runtime.block_on(packer.stop());
         }
 
+        /// The id of the Document `n`, in the shape a consumer uses: `l` and
+        /// 32 hex digits.
+        fn id_of(n: u64) -> String {
+            let hi = (n + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let lo = (n + 1).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ (hi >> 29);
+            format!("l{:032x}", (u128::from(hi) << 64) | u128::from(lo))
+        }
+
+        /// The next number of a xorshift sequence.
+        fn next(x: &mut u64) -> u64 {
+            *x ^= *x << 13;
+            *x ^= *x >> 7;
+            *x ^= *x << 17;
+            *x
+        }
+
+        fn none() -> scheda_api::v1::OpenOptions {
+            scheda_api::v1::OpenOptions::default()
+                .with_work_tree(scheda_api::v1::WorkTree::WORK_TREE_NONE)
+                .with_write_timeout_ms(60_000)
+        }
+
+        /// The mean time of `reads` random `get`s out of `documents`
+        /// Documents, in microseconds.
+        async fn get_micros(vault: &Arc<crate::vault::Vault>, documents: u64, reads: u64) -> f64 {
+            let mut x = 0x1234_5678_9abc_def1_u64;
+            let began = Instant::now();
+            for _ in 0..reads {
+                let id = id_of(next(&mut x) % documents);
+                let got = crate::testing::step(vault, move |cx, vault| {
+                    vault.get(
+                        cx,
+                        "docs",
+                        scheda_api::v1::DocumentId {
+                            id: Some(id),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .await
+                .unwrap();
+                assert!(got.raw.is_some());
+            }
+            began.elapsed().as_secs_f64() * 1e6 / reads as f64
+        }
+
+        /// The mean of the last `window` of `times` (seconds), in microseconds.
+        fn mean_micros(times: &[f64], window: usize) -> f64 {
+            let tail = &times[times.len().saturating_sub(window)..];
+            tail.iter().sum::<f64>() * 1e6 / tail.len() as f64
+        }
+
+        /// G2: writes through a Vault with no work tree, one Document a
+        /// write: the time of a write, the time of a read, the anonymous
+        /// memory, and the packs, after the early writes and at the end.
+        /// `SCHEDA_MEASURE_WRITES` sets the count (100 000).
+        #[tokio::test]
+        #[ignore = "measures time and memory: run by hand"]
+        async fn writes_through_a_vault_without_a_work_tree_keep_their_time_read_and_memory() {
+            let total = count_from_env("SCHEDA_MEASURE_WRITES", 100_000);
+            let early = 2000.min(total / 3).max(1);
+            let window = 1000.min(early as usize);
+            let scratch = Scratch::new("measure-g2");
+            let vault = crate::testing::open(&scratch.0, none()).await.unwrap();
+            crate::testing::create_collection(
+                &vault,
+                serde_json::json!({"name": "docs", "schema": {"standard": {}}}),
+            )
+            .await
+            .unwrap();
+            let (began, mut last) = (Instant::now(), Instant::now());
+            let mut times: Vec<f64> = Vec::with_capacity(total as usize);
+            // (write us, read us, anonymous bytes, packs)
+            let mut seen: Vec<(f64, f64, u64, usize)> = Vec::new();
+            for n in 0..total {
+                let id = id_of(n);
+                let request = crate::testing::upsert_of(&id, &noise(n + 1, 2048));
+                let at = Instant::now();
+                crate::testing::upsert(&vault, "docs", request)
+                    .await
+                    .unwrap();
+                times.push(at.elapsed().as_secs_f64());
+                if n + 1 == early || n + 1 == total {
+                    let packs = pack_count(&Repository::open(&scratch.0).unwrap());
+                    let read = get_micros(&vault, n + 1, 5000).await;
+                    let write = mean_micros(&times, window);
+                    let memory = anonymous_bytes();
+                    eprintln!(
+                        "{} writes: write {write:.0} us (last {window}), read {read:.0} us, anonymous {} MiB, {packs} packs, {:.0} s",
+                        n + 1,
+                        memory >> 20,
+                        began.elapsed().as_secs_f64()
+                    );
+                    seen.push((write, read, memory, packs));
+                }
+                if last.elapsed() > EVERY {
+                    last = Instant::now();
+                    eprintln!(
+                        "progress: {n} writes, {:.0} s",
+                        began.elapsed().as_secs_f64()
+                    );
+                }
+            }
+            vault.close().await.unwrap();
+            let (early, late) = (seen[0], seen[seen.len() - 1]);
+            assert!(
+                late.0 <= 3.0 * early.0,
+                "write {} us then {} us",
+                early.0,
+                late.0
+            );
+            assert!(
+                late.1 <= 3.0 * early.1,
+                "read {} us then {} us",
+                early.1,
+                late.1
+            );
+            assert!(
+                late.2 <= early.2 + 200 * 1024 * 1024,
+                "anonymous memory {} then {}",
+                early.2,
+                late.2
+            );
+        }
+
+        /// Writes the folder of `tree` into `repo`, over `base` when given:
+        /// every entry a blob holding its name, every subfolder under its
+        /// chain of labels. Returns the tree.
+        fn write_folder(
+            repo: &Repository,
+            tree: &crate::layout::Tree,
+            base: Option<&git2::Tree<'_>>,
+            made: &mut u64,
+            progress: &mut Instant,
+        ) -> Oid {
+            let mut builder = repo.treebuilder(base).unwrap();
+            for name in tree.entries() {
+                let blob = repo.blob(name).unwrap();
+                builder
+                    .insert(std::str::from_utf8(name).unwrap(), blob, 0o100_644)
+                    .unwrap();
+                *made += 1;
+                if progress.elapsed() > EVERY {
+                    *progress = Instant::now();
+                    eprintln!("progress: {made} blobs written");
+                }
+            }
+            for (added, child) in tree.children() {
+                let mut oid = write_folder(repo, child, None, made, progress);
+                let labels = crate::layout::encode(added);
+                for label in labels[1..].iter().rev() {
+                    let mut wrap = repo.treebuilder(None).unwrap();
+                    wrap.insert(label, oid, 0o040_000).unwrap();
+                    oid = wrap.write().unwrap();
+                }
+                builder.insert(&labels[0], oid, 0o040_000).unwrap();
+            }
+            builder.write().unwrap()
+        }
+
+        /// G3: a write into a collection of N Documents, N in
+        /// `SCHEDA_MEASURE_DOCUMENTS` (`100000,1000000`). The collection is
+        /// laid out and written straight into the repository as one commit
+        /// and packed, then the Vault is opened through the API.
+        #[tokio::test]
+        #[ignore = "measures time and memory: run by hand"]
+        async fn a_write_into_a_collection_of_a_million_documents() {
+            let sizes = std::env::var("SCHEDA_MEASURE_DOCUMENTS")
+                .unwrap_or_else(|_| "100000,1000000".to_owned());
+            for size in sizes.split(',') {
+                let documents: u64 = size.trim().parse().unwrap();
+                let scratch = Scratch::new(&format!("measure-g3-{documents}"));
+                let vault = crate::testing::open(&scratch.0, none()).await.unwrap();
+                crate::testing::create_collection(
+                    &vault,
+                    serde_json::json!({"name": "docs", "schema": {"standard": {}}}),
+                )
+                .await
+                .unwrap();
+                vault.close().await.unwrap();
+                drop(vault);
+
+                let began = Instant::now();
+                let repo = Repository::open(&scratch.0).unwrap();
+                let head = repo.head().unwrap();
+                let branch = head.name().unwrap().to_owned();
+                let parent = head.peel_to_commit().unwrap();
+                let root = parent.tree().unwrap();
+                let docs = root
+                    .get_name("docs")
+                    .unwrap()
+                    .to_object(&repo)
+                    .unwrap()
+                    .into_tree()
+                    .unwrap();
+                let tree = crate::layout::Tree::build(b"", (0..documents).map(id_of));
+                let built = began.elapsed();
+                let (mut made, mut progress) = (0, Instant::now());
+                let docs_oid = write_folder(&repo, &tree, Some(&docs), &mut made, &mut progress);
+                let mut top = repo.treebuilder(Some(&root)).unwrap();
+                top.insert("docs", docs_oid, 0o040_000).unwrap();
+                let top = repo.find_tree(top.write().unwrap()).unwrap();
+                let who = Signature::now("Measure", "measure@example.test").unwrap();
+                let commit = repo
+                    .commit(None, &who, &who, "documents", &top, &[&parent])
+                    .unwrap();
+                repo.reference(&branch, commit, true, "documents").unwrap();
+                drop((top, docs, root, parent, head, tree));
+                let written = began.elapsed();
+                crate::git::git()
+                    .current_dir(&scratch.0)
+                    .arg("repack")
+                    .arg("-a")
+                    .arg("-d")
+                    .arg("-q")
+                    .run()
+                    .unwrap();
+                let repo = Repository::open(&scratch.0).unwrap();
+                eprintln!(
+                    "{documents} Documents: layout {:.1} s, written {:.1} s, packed {:.1} s, {} packs",
+                    built.as_secs_f64(),
+                    written.as_secs_f64(),
+                    began.elapsed().as_secs_f64(),
+                    pack_count(&repo)
+                );
+
+                let opened = Instant::now();
+                let vault = crate::testing::open(&scratch.0, none()).await.unwrap();
+                eprintln!("open {:.2} s", opened.elapsed().as_secs_f64());
+                let mut x = 0x2545_f491_4f6c_dd1d_u64;
+                let report = |label: &str, times: &[f64]| {
+                    let mean = times.iter().sum::<f64>() / times.len() as f64;
+                    let max = times.iter().copied().fold(0.0, f64::max);
+                    eprintln!(
+                        "{documents} Documents, {label}: mean {:.1} ms, max {:.1} ms",
+                        mean * 1e3,
+                        max * 1e3
+                    );
+                    mean
+                };
+                let mut fresh = Vec::new();
+                for i in 0..200 {
+                    let request = crate::testing::upsert_of(&id_of(documents + i), b"new");
+                    let at = Instant::now();
+                    crate::testing::upsert(&vault, "docs", request)
+                        .await
+                        .unwrap();
+                    fresh.push(at.elapsed().as_secs_f64());
+                }
+                let mut updated = Vec::new();
+                for i in 0..200 {
+                    let request =
+                        crate::testing::upsert_of(&id_of(next(&mut x) % documents), &noise(i, 64));
+                    let at = Instant::now();
+                    crate::testing::upsert(&vault, "docs", request)
+                        .await
+                        .unwrap();
+                    updated.push(at.elapsed().as_secs_f64());
+                }
+                let new_mean = report("200 new ids", &fresh);
+                let old_mean = report("200 updates", &updated);
+                eprintln!(
+                    "{documents} Documents, get: mean {:.0} us, {} MiB anonymous",
+                    get_micros(&vault, documents, 5000).await,
+                    anonymous_bytes() >> 20
+                );
+                vault.close().await.unwrap();
+                assert!(new_mean < 0.05, "a new id took {new_mean} s on average");
+                assert!(old_mean < 0.05, "an update took {old_mean} s on average");
+            }
+        }
+
         /// Packs `objects` of the overlay into `real` as one pack.
         fn pack_of(overlay: &Overlay, real: &Repository, objects: &[Oid]) {
             let mut builder = overlay.repo().packbuilder().unwrap();

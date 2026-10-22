@@ -305,14 +305,16 @@ D7, D8, D9; P7, P8.
       a write whose merge fails writes nothing (`pack::tests`:
       `a_run_of_open_write_close_never_leaves_hard_packs_below_the_cap`,
       `a_write_whose_merge_fails_fails_with_its_code_and_moves_nothing`).
-- [ ] The syncs of one write counted by `strace` (13 with a work tree):
-      measured by a run on 22 October 2026 and noted in the CHANGELOG; no
-      test in the tree holds the count.
-- [ ] The slow measurements: after 100 000 writes the time to read and the
-      memory have not grown, the peak memory of the worst merge, the time to
-      read a Document with 100 and with 500 packs. They are `#[ignore]`
-      tests (`pack::tests`) that run later, by hand, with the owner's
-      permission.
+- [x] The syncs of one write counted by `strace` (13 with a work tree):
+      a run on 22 October 2026, noted in the CHANGELOG; no test holds the
+      count.
+- [x] The slow measurements (`pack::tests::measure`, release, tmpfs, run
+      once on 22 October 2026): 100 000 writes, 14 packs after 2 000 and
+      after 100 000, a read 15.4 then 8.9 us, anonymous memory 77 then
+      126 MiB (a known issue, `.claude/notes/generation-4-known-issues.md`);
+      the worst merge at the cap, 192 000 objects in 0.3 s, +9 MiB; a read
+      7.5 us with 1 pack, 38.9 with 100, 116.8 with 500. They are
+      `#[ignore]` tests, run by hand.
 - *Check:* a write and a batch of 500 Documents each leave one new pack
   and no loose object; the syncs of one write counted by `strace` (13 with
   a work tree, any depth), the count noted in the CHANGELOG; after 100 000
@@ -348,15 +350,16 @@ D6, D14; P1, P2, P3.
       `a_mirror_that_has_the_branch_is_cloned_on_it_whatever_its_head_names`,
       `a_mirror_with_commits_but_not_the_branch_is_invalid_argument_and_leaves_nothing`,
       `an_attach_does_not_check_the_initial_branch`).
-- [ ] The syncs of one write (6) and of a batch of 500 (6) counted by
-      `strace`: measured by a run on 22 October 2026; no test in the tree
-      holds the count.
-- [ ] `0.25` opening such a Vault writes nothing: shown by a run of the
+- [x] The syncs of one write (6) and of a batch of 500 (6) counted by
+      `strace`: a run on 22 October 2026; no test holds the count.
+- [x] `0.25` opening such a Vault writes nothing: shown by a run of the
       released binary on 22 October 2026 (`INVALID_ARGUMENT`, and
       `NOT_A_VAULT` with `--mode open-existing`); no test in the tree.
-- [ ] 100 000 writes through a Vault without a work tree: the time of a
-      write and of a read and the memory have not grown. A slow
-      measurement, run later with the owner's permission.
+- [x] 100 000 writes through a Vault without a work tree
+      (`pack::tests::measure`, release, run once on 22 October 2026): a
+      write 1.16 ms after 2 000 and 1.45 ms after 100 000, a read 34 then
+      47 us, 10 then 20 packs; anonymous memory 13 then 136 MiB, a known
+      issue.
 - *Check:* the syncs counted by `strace`: one write 6, and a batch of
   500 Documents 6 too; `Pull` and `Sync` between two Vaults without a work
   tree, with a join and with a conflict: the join touches no index and no checkout;
@@ -390,8 +393,10 @@ D1–D5; P4, P5, P6.
       `a_vault_whose_marker_says_3_is_generation_in_every_open_mode_and_nothing_changes`).
 - [ ] A listing from an id prefix that stops at the first id outside it
       reads only the trees on its way: not tested yet.
-- [ ] A write measured at 100 000 and at 1 000 000 Documents, before and
-      after: a slow measurement, run later with the owner's permission.
+- [x] A write measured at 100 000 and at 1 000 000 Documents
+      (`pack::tests::measure`, release, run once on 22 October 2026): 0.9 ms
+      and 1.1 ms (max 8.1 and 10.1 ms), a get 25 and 46 us; before, with
+      git's index, 123 ms and 1.34 s.
 - *Check:* the same set of ids written in two orders gives the same tree;
   a folder at N + 1 splits and at N merges, and `History` of every moved
   Document is unchanged; a split re-embeds nothing (the embedder's calls

@@ -77,3 +77,27 @@ Vault and a full learn instead of a migration.
    stop awaits the merge's blocking step, which drops the lock file; the
    fallback read takes it shared only while it reads). Find the holder:
    the design promises no lock after `Close`.
+3. **Anonymous memory grows with writes**: about 1.2 KB a write through a
+   Vault without a work tree (13 MiB after 2 000 writes, 136 MiB after
+   100 000; release, tmpfs, 22 October 2026), about 0.5 KB a write at the
+   pack level (77 to 126 MiB). Not known whether it levels off (caches) or
+   leaks (the overlay object database of each write, the merges' cache of
+   pack sizes by name, libgit2's registry of packs). Measure the memory at
+   several points of a run and find the holder.
+
+## Measurements (22 October 2026, release, tmpfs, one run each)
+
+- Pack level, 100 000 writes with the merge task: 79 s (about 0.8 ms a
+  write); 14 packs after 2 000 and after 100 000; a read 15.4 then 8.9
+  us; anonymous memory 77 then 126 MiB.
+- The worst merge at the cap: 192 000 objects, 80 MiB, 0.3 s, peak +9
+  MiB (libgit2's packer: 13 to 17 s and +114 MB).
+- Reads at 100 000 Documents: 7.5 us with 1 pack, 38.9 with 100, 116.8
+  with 500 (synthetic; the bound keeps a Vault under 32 below the cap).
+- A Vault without a work tree, 100 000 writes of 2 KB, ids l<32 hex>:
+  139 s; a write 1.16 ms after 2 000 and 1.45 ms after 100 000 (0.25 with
+  a work tree: 52 to 62 ms at 100 000 Documents); a read 34 then 47 us;
+  10 then 20 packs; memory as in known issue 3.
+- A write into a collection of N Documents, a Vault without a work tree:
+  at 100 000, 0.9 ms (max 8.1 ms), a get 25 us; at 1 000 000, 1.1 ms (max
+  10.1 ms), a get 46 us (0.25: 123 ms and 1.34 s, git's index).
