@@ -17,6 +17,13 @@ Vault and a full learn instead of a migration.
 
 ## Deferred, to do after G7
 
+0. **G6, the move of a 0.25 Vault by the command line**, after the
+   release (my decision, 22 October 2026, for the owner's review): the
+   anchor consumer starts with a new Vault and does not need it, and its
+   proof needs the 0.25.0 command line, which the gate cannot build. Do
+   it as a script plus one run against a fixture made with the 0.25.0
+   binary built from its tag.
+
 1. **Windows: a pack that cannot be removed** (owner's condition 2 on
    decision 3). A file another process (or this one) has open or mapped
    is not removed on Windows. The merge must not fail on that refusal:

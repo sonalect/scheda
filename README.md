@@ -23,6 +23,16 @@ Vault, and adds the marker in one commit to a git working tree that lacks
 it, unless `OpenOptions.mode` asks to open an existing Vault only
 (`NOT_A_VAULT`) or to create a new one only.
 
+**Generation 4.** The on-disk format of a Vault is generation 4 (`0.26`):
+folders hold at most 64 entries (larger ones are split into `_<hex>`
+folders by the bytes of the ids, so a write costs the same at a million
+Documents as at a hundred); every write is one pack, merged in the
+background (no loose objects, no `git gc`); and `OpenOptions.work_tree`
+`WORK_TREE_NONE` makes a Vault with no files and no git index, read with
+`git log` and `git show`. A Vault of generation 3 (`0.25` and before) is
+refused with `GENERATION`; the library does not move it
+(`docs/24-generation-4.md`).
+
 The public API is protobuf services in one package, `scheda.v1`
 (`api/scheda/v1`), reached through objects: `Scheda` opens a `Vault`, which
 gives `Collection`, `Mirror`, and `Index`. Each write call is one commit
@@ -130,8 +140,8 @@ Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
 Host architecture only: no linux `amd64` / `arm64` cross targets.
 Target crates use the platform CRT (dynamic glibc on Linux). Only `clone`,
 `fetch`, and `push` invoke the system **`git`** executable (`git` must be on
-`PATH`); every other git operation, packing included, is libgit2 in
-process. Git is not behind a feature: `https://`, `http://`, `ssh://`,
+`PATH`); every other git operation, packing and the merging of packs
+included, is libgit2 in process. Git is not behind a feature: `https://`, `http://`, `ssh://`,
 `git@`, and file remotes all work, and authentication, `~/.ssh/config`,
 and host-key checking match a plain `git` command. Features:
 `index` is on by default: the Index on Lance (the crates `lance`,

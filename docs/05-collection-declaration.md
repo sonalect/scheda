@@ -243,19 +243,20 @@ and a caller's command that carries one is refused (`stored::tests`:
 ## 5. Journal segments (numbers)
 
 **SCH-14. Size cap is required for `journal`.** The declaration sets
-`segment_max_bytes`. If omitted, the default is **1 MiB** (1024 ×
-1024): every append rewrites its open segment as a new git object, so the
-cap bounds that cost. The implementation rejects a cap greater than **32 MiB** (still
+`segment_max_bytes`. If omitted, the default is **128 KiB** (128 ×
+1024): every append rewrites its open segment as a new git object, about
+half the cap on average, so the cap bounds that cost, and a smaller one
+costs less (the layout of `03` MOD-8 makes more segments free). The implementation rejects a cap greater than **32 MiB** (still
 under typical host warn/reject limits of ~50 / ~100 MiB; GIT-6).
 Optional: `segment_max_lines`, calendar rotation (`daily` UTC). Rotation
 is still size-first: a cap hit closes the segment even mid-day. Caps may
 change on a later `Vault.UpdateCollection`. *Check:* a default journal
-rotates at 1 MiB; a cap of `48 MiB` is `INVALID_ARGUMENT`; a cap or a line
+rotates at 128 KiB; a cap of `48 MiB` is `INVALID_ARGUMENT`; a cap or a line
 cap of `0` is `INVALID_ARGUMENT` (`collection::tests`:
 `journal_limits_are_checked_and_the_default_cap_is_filled_in`); after the
 cap, the next `Create` does not grow the closed file (MOD-10;
 `journal::tests`: `rotation_by_size_closes_a_segment_without_changing_it`,
-`rotation_by_line_count`, `daily_rotation_names_by_date_and_starts_a_new_segment_on_a_new_day`); a journal with no cap rotates at 1 MiB, and a segment already over it is closed by the next append (`idmap::tests::a_journal_with_no_cap_rotates_at_one_mebibyte`).
+`rotation_by_line_count`, `daily_rotation_names_by_date_and_starts_a_new_segment_on_a_new_day`); a journal with no cap rotates at 128 KiB, and a segment already over it is closed by the next append (`idmap::tests::a_journal_with_no_cap_rotates_at_128_kib`; `journal::tests`: `a_journal_declared_without_a_cap_rotates_its_open_segment_at_128_kib`).
 
 Closed segments are never rewritten. Sequence files are eight lowercase
 hex digits, then the clone's writer identity (`00000001-alice.jsonl`),
@@ -364,7 +365,7 @@ generation 3 load (`collection::tests`: `the_fixtures_of_generation_three_load`)
 | `schema.standard` | one of three | Empty mapping. `standard` kind. File: `{name}/{id}`. |
 | `schema.journal` | one of three | `journal` kind. Caps below. |
 | `schema.singleton` | one of three | Mapping with `id` (MOD-7). Same slug as Document `id` (library); an extension, if any, is part of `id`. |
-| `schema.journal.segmentMaxBytes` (`segment_max_bytes`) | `journal` only | Integer bytes. Omitted → **1 MiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |
+| `schema.journal.segmentMaxBytes` (`segment_max_bytes`) | `journal` only | Integer bytes. Omitted → **128 KiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |
 | `schema.journal.segmentMaxLines` (`segment_max_lines`) | `journal` only | Optional integer line cap. If set, ≥ `1`. |
 | `schema.journal.daily` | `journal` only | Empty mapping. Calendar rotation UTC, still size-first. Omitted → no calendar rotation. |
 | `schema.isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Documents under `{vault}/.isolated/{name}/`. Listed as isolated (ISO-3). |

@@ -63,6 +63,8 @@ All of them go before the subcommand or after it.
 | `--vault PATH` | The Vault folder. Required by every subcommand but `scheda-info`. The only filesystem path the user supplies for the Vault. |
 | `--mode MODE` | `open-or-create`, `open-existing`, or `create-new` (`OpenOptions.mode`). Unset: the library default (open, or make when the folder holds no Vault). |
 | `--mirror URL` | `OpenOptions.mirror`: the git remote URL of the mirror, set at open. |
+| `--work-tree MODE` | `files` or `none` (`OpenOptions.work_tree`): whether a Vault that this call makes, new or cloned, has a folder of files (`04` GIT-15). On a Vault that exists a set value must be the Vault's own, else `INVALID_ARGUMENT`. Unset: `files`. |
+| `--initial-branch NAME` | `OpenOptions.initial_branch`: the branch a Vault that this call makes starts on (`04` GIT-9). A name that is not a branch name is `INVALID_ARGUMENT` and nothing is written. Unset: `init.defaultBranch`, or `main`. |
 | `--auto-sync` | `OpenOptions.auto_sync` (default off): pull on open, push after a local commit, when a mirror exists. |
 | `--author-name NAME` | `OpenOptions.author.name`. With `--author-email`, or neither; one alone is `INVALID_ARGUMENT`. |
 | `--author-email EMAIL` | `OpenOptions.author.email`. With `--author-name`, or neither. |
@@ -198,7 +200,7 @@ same JSON: `the_cli_and_the_library_give_the_same_json_and_code`,
 | Command | Args |
 |---|---|
 | `scheda-info` | `Scheda.Info`: the version and features of this build. Opens no Vault; no `--vault`. |
-| `info` | `Vault.Info`: `path`, `indexPath`, `writer`, `version` (the state token of the stored state). With `--mode create-new` it makes the Vault. |
+| `info` | `Vault.Info`: `path`, `indexPath`, `writer`, `workTree` (`WORK_TREE_FILES` or `WORK_TREE_NONE`), `version` (the state token of the stored state). With `--mode create-new` it makes the Vault. |
 | `check` | `Vault.Check`: `CheckReport`; `{}` when the Vault is sound. |
 | `list-collections` | `Vault.ListCollections`: the `CollectionDeclaration`s. |
 | `create-collection` | `NAME [--schema JSON]` (or stdin). JSON is the `Schema`, for example `{"standard":{}}`. |

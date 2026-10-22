@@ -143,6 +143,34 @@ dotfile such as `.collection.yaml` (`documents::tests`:
 `tests/reads.rs`:
 `a_listing_is_in_id_order_whole_ids_and_reads_no_file_but_the_commit`).
 
+**The layout of a folder (generation 4).** A folder of a `standard`
+collection and the segment folder of a `journal` hold at most 64 entries
+(files and id subfolders count; dotfiles neither count nor move), in the
+Vault's repository and in `.isolated/` alike. A folder of more than 64 is
+split by the bytes of the names into subfolders named `_` and the lowercase
+hex of the bytes they add to their parent's prefix (a label over 120 bytes
+is a chain of folders), only where the names are dense; at 64 it is flat
+again. The file name stays the id. The layout follows from the set of names
+in a folder alone, so the same Documents give the same tree whatever order
+or clone wrote them. `{name}/{id}` above is the address of an id, not always
+its path: `lessons/l3f1….yaml` of a large collection lives at
+`lessons/_6c61/_33/…/l3f1….yaml`. A read finds a Document at any level of
+its prefix path, a tree made by hand included; a write lays out the folders
+on its path; `Vault.Check` reports a file outside its canonical place and a
+folder past its bound. A move by the layout is no version for `History`.
+A Vault may have no work tree (`04` GIT-15): the paths are then the paths of
+`HEAD`, and no file exists. *Check:* a folder is flat at 64, splits at 65,
+and is flat again after a removal; the same ids written in two orders give
+equal trees; a read finds a Document in a tree split by hand; a move is no
+version (`tests/layout.rs`:
+`a_folder_is_flat_at_64_documents_splits_at_65_and_is_flat_again_after_a_removal_with_the_files_where_the_tree_has_them`,
+`the_same_100_ids_written_in_two_orders_in_two_vaults_give_equal_trees`,
+`get_finds_every_document_of_a_collection_split_by_hand_and_a_missing_id_is_not_found`,
+`the_history_of_a_document_a_split_moved_has_no_new_version`); the
+segments of a journal and an isolated collection follow the rule
+(`tests/index.rs`: `a_journal_of_more_than_64_segments_is_laid_out_canonically_and_its_id_map_follows_the_moved_segments`;
+`tests/layout.rs`: `an_isolated_collection_of_65_documents_is_split_canonically_in_its_repository_and_a_removal_merges_it`).
+
 **MOD-9. Journal path is the segment, not the `id`.** The Document still
 lives at `(collection, id)`. The file path is the open or closed segment
 that contains the line. Callers must not treat the segment name as `id`.

@@ -101,7 +101,7 @@ API or on-disk format changes bump the minor.
   repository's objects are no longer packed at the end of a write when
   loose ones pile up. A write into a Vault with a work tree syncs 13 files
   and folders to disk, counted with `strace`, whatever the depth of its
-  path (it was 18 at the top of a collection and 24 three folders down).
+  path (it was 18 at the top of a collection and 24 three folders down). Into a Vault without a work tree a write syncs 6, and a batch of 500 Documents 6 too.
 - Packs are merged in the background, by one task for each open Vault,
   woken after each write and at open. The merge is geometric (factor 2, the
   split rule of `git repack --geometric`) among the packs below a cap of

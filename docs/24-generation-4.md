@@ -1,6 +1,6 @@
 # 24. The Vault of generation 4
 
-Document 24 of the Scheda package. Version 0.2, 21 October 2026.
+Document 24 of the Scheda package. Version 0.3, 22 October 2026.
 
 Status: approved by the owner on 21 October 2026. The decisions of §2
 were taken one at a time, with the anchor consumer's facts; the proposals
@@ -131,7 +131,9 @@ the writes (no new deltas: about 3.3 KB a write against 2.5 KB at
 N = 64).
 
 *Amended 21 October 2026:* the packs below the cap number fewer than
-32 at every moment. A write that finds 32 or more merges first, under
+32 whenever no merge is replacing packs (a merge keeps its new pack
+beside the ones it replaces until it has removed them, so for that moment
+there is one more). A write that finds 32 or more merges first, under
 the pack lock (it waits for a merge of the task that holds it), until
 fewer remain, and then writes; when that merge fails, the write fails
 with its code and writes nothing. So the bound holds whatever the load
@@ -207,9 +209,11 @@ it. The CLI takes `--work-tree none`. *Recommendation:* accept.
 configuration of `{vault}/.git`, and of `{vault}/.isolated/.git`. Git then
 refuses every command that needs a work tree (`git status`, `git commit`),
 so no person's command can stage the deletion of a million files, and an
-older Scheda refuses the Vault without writing anything (0.25 takes it for
-a Vault another `Open` is making and answers `ABORTED`; to be proven by a
-run, G2). Local, not committed: a clone chooses its own mode.
+older Scheda refuses the Vault without writing anything (0.25 was predicted to take it for
+a Vault another `Open` is making and answer `ABORTED`; a run of the `0.25.0`
+binary on 22 October 2026 showed otherwise: `info` and a write answer
+`INVALID_ARGUMENT`, `--mode open-existing` answers `NOT_A_VAULT`, and nothing
+in the Vault changes, which is what the proposal needed). Local, not committed: a clone chooses its own mode.
 *Recommendation:* accept.
 
 **P3. Without a work tree there is no reflog and no note.** Such a Vault
@@ -285,12 +289,30 @@ green. One docs pass at the end (G7).
 
 D7, D8, D9; P7, P8.
 
-- [ ] A write and a batch store their objects as one pack before `HEAD`
-      moves; nothing is left loose.
-- [ ] The merge rule of D8 as a task of the Vault (P8), in place of the
+- [x] A write and a batch store their objects as one pack before `HEAD`
+      moves; nothing is left loose (`tests/pack.rs`:
+      `a_write_and_a_batch_of_500_documents_each_leave_one_new_pack_and_no_loose_object`).
+- [x] The merge rule of D8 as a task of the Vault (P8), in place of the
       packing at the end of a write; the loose objects of a person's commit
-      join it.
-- [ ] The object cache budget set at the first `Open` of the process.
+      join it (`pack::tests`: `the_split_is_geometric_with_factor_two`,
+      `the_task_merges_after_a_wake_and_holds_no_lock_when_it_is_done`,
+      `the_loose_objects_of_a_person_join_a_merge_and_alone_cause_one_past_a_thousand`).
+- [x] The object cache budget set at the first `Open` of the process
+      (`pack::tests`: `the_cache_budget_is_16_mib_after_the_first_open_when_git2_filled_the_cache_before`).
+- [x] A process killed in the middle of a merge leaves the Vault whole
+      (`tests/pack.rs`: `a_process_killed_in_the_middle_of_a_merge_leaves_the_vault_whole`);
+      a run of open, write, close never leaves 32 packs below the cap, and
+      a write whose merge fails writes nothing (`pack::tests`:
+      `a_run_of_open_write_close_never_leaves_hard_packs_below_the_cap`,
+      `a_write_whose_merge_fails_fails_with_its_code_and_moves_nothing`).
+- [ ] The syncs of one write counted by `strace` (13 with a work tree):
+      measured by a run on 22 October 2026 and noted in the CHANGELOG; no
+      test in the tree holds the count.
+- [ ] The slow measurements: after 100 000 writes the time to read and the
+      memory have not grown, the peak memory of the worst merge, the time to
+      read a Document with 100 and with 500 packs. They are `#[ignore]`
+      tests (`pack::tests`) that run later, by hand, with the owner's
+      permission.
 - *Check:* a write and a batch of 500 Documents each leave one new pack
   and no loose object; the syncs of one write counted by `strace` (13 with
   a work tree, any depth), the count noted in the CHANGELOG; after 100 000
@@ -309,11 +331,32 @@ D7, D8, D9; P7, P8.
 
 D6, D14; P1, P2, P3.
 
-- [ ] `OpenOptions.work_tree`, `VaultInfo.work_tree`, `--work-tree` in the
-      CLI (generate).
-- [ ] `Open` makes, clones, and attaches such a Vault; a write and a pull
-      write no file and no git index; no reflog, no note.
-- [ ] `OpenOptions.initial_branch` and `--initial-branch`.
+- [x] `OpenOptions.work_tree`, `VaultInfo.work_tree`, `--work-tree` in the
+      CLI (generate) (`tests/documents.rs`: `an_attach_asks_for_the_mode_the_vault_has`;
+      `rust/cli/tests/cli.rs`: `work_tree_and_initial_branch_flags_reach_the_open_options`).
+- [x] `Open` makes, clones, and attaches such a Vault; a write and a pull
+      write no file and no git index; no reflog, no note (`tests/documents.rs`:
+      `a_vault_without_a_work_tree_writes_no_file_no_index_and_no_reflog`;
+      `tests/mirror.rs`: `a_clone_with_no_work_tree_is_bare_holds_no_file_and_reads_the_mirrors_documents`,
+      `a_pull_fast_forwards_a_vault_without_a_work_tree_and_touches_no_index_no_file_no_reflog`,
+      `both_vaults_without_a_work_tree_writing_different_documents_end_equal_through_a_join`,
+      `both_vaults_without_a_work_tree_writing_one_document_differently_conflict_and_change_nothing`;
+      `commit::tests`: `a_write_cut_in_a_vault_without_a_work_tree_leaves_it_whole`).
+- [x] `OpenOptions.initial_branch` and `--initial-branch`, every case of D14
+      (`tests/mirror.rs`: `a_new_vault_starts_on_the_initial_branch_in_both_modes_and_unset_keeps_main`,
+      `a_clone_of_an_empty_mirror_starts_on_the_initial_branch_and_its_sync_pushes_it`,
+      `a_mirror_that_has_the_branch_is_cloned_on_it_whatever_its_head_names`,
+      `a_mirror_with_commits_but_not_the_branch_is_invalid_argument_and_leaves_nothing`,
+      `an_attach_does_not_check_the_initial_branch`).
+- [ ] The syncs of one write (6) and of a batch of 500 (6) counted by
+      `strace`: measured by a run on 22 October 2026; no test in the tree
+      holds the count.
+- [ ] `0.25` opening such a Vault writes nothing: shown by a run of the
+      released binary on 22 October 2026 (`INVALID_ARGUMENT`, and
+      `NOT_A_VAULT` with `--mode open-existing`); no test in the tree.
+- [ ] 100 000 writes through a Vault without a work tree: the time of a
+      write and of a read and the memory have not grown. A slow
+      measurement, run later with the owner's permission.
 - *Check:* the syncs counted by `strace`: one write 6, and a batch of
   500 Documents 6 too; `Pull` and `Sync` between two Vaults without a work
   tree, with a join and with a conflict: the join touches no index and no checkout;
@@ -327,12 +370,28 @@ D6, D14; P1, P2, P3.
 
 D1–D5; P4, P5, P6.
 
-- [ ] The rule of D2 with N = 64: the path of an id, the descent of a
+- [x] The rule of D2 with N = 64: the path of an id, the descent of a
       read, the in-order walk, the split and the merge of a write; standard
-      collections, journal segments, isolated collections.
-- [ ] `History` and the indexer by id; a move is no change (D4).
-- [ ] The join of the mirror by id (P6); `Check` of the layout (P5).
-- [ ] The marker `version: 4`; a Vault of generation 3 is `GENERATION`.
+      collections, journal segments, isolated collections (`tests/layout.rs`:
+      `the_same_100_ids_written_in_two_orders_in_two_vaults_give_equal_trees`,
+      `a_folder_is_flat_at_64_documents_splits_at_65_and_is_flat_again_after_a_removal_with_the_files_where_the_tree_has_them`,
+      `get_finds_every_document_of_a_collection_split_by_hand_and_a_missing_id_is_not_found`,
+      `an_isolated_collection_of_65_documents_is_split_canonically_in_its_repository_and_a_removal_merges_it`;
+      `tests/index.rs`: `a_journal_of_more_than_64_segments_is_laid_out_canonically_and_its_id_map_follows_the_moved_segments`).
+- [x] `History` and the indexer by id; a move is no change (D4)
+      (`tests/layout.rs`: `the_history_of_a_document_a_split_moved_has_no_new_version`;
+      `tests/search.rs`: `a_move_by_the_layout_embeds_and_projects_nothing_again`).
+- [x] The join of the mirror by id (P6); `Check` of the layout (P5)
+      (`tests/mirror.rs`: `two_clones_that_wrote_different_documents_into_one_folder_join_into_the_canonical_tree`;
+      `tests/layout.rs`: `check_reports_a_document_in_the_wrong_layout_folder_with_its_path`,
+      `check_reports_a_flat_folder_of_70_documents_with_the_path_of_the_folder`).
+- [x] The marker `version: 4`; a Vault of generation 3 is `GENERATION`
+      (`tests/open.rs`: `a_new_vault_marker_says_version_4`,
+      `a_vault_whose_marker_says_3_is_generation_in_every_open_mode_and_nothing_changes`).
+- [ ] A listing from an id prefix that stops at the first id outside it
+      reads only the trees on its way: not tested yet.
+- [ ] A write measured at 100 000 and at 1 000 000 Documents, before and
+      after: a slow measurement, run later with the owner's permission.
 - *Check:* the same set of ids written in two orders gives the same tree;
   a folder at N + 1 splits and at N merges, and `History` of every moved
   Document is unchanged; a split re-embeds nothing (the embedder's calls
@@ -346,10 +405,14 @@ D1–D5; P4, P5, P6.
 
 D12, D13; P9.
 
-- [ ] The id maps and the Index's folders renamed (P9).
-- [ ] The round syncs the files of the new Lance versions, then the state.
-- [ ] At open, versions newer than the state are left over from a round
-      that did not finish and do not stop the next one.
+- [x] The id maps and the Index's folders renamed (P9) (`tests/budget.rs`:
+      `no_path_under_a_vault_without_a_work_tree_is_longer_than_120_characters`;
+      `store::tests`: `the_paths_of_a_table_with_every_index_and_long_columns_stay_short`).
+- [x] The round syncs the files of the new Lance versions, then the state
+      (`tables::tests`: `a_round_flushes_the_new_files_of_lance_and_their_folders_before_its_commit`).
+- [x] At open, versions newer than the state are left over from a round
+      that did not finish and do not stop the next one (`tables::tests`:
+      `a_round_stopped_after_lance_and_before_the_commit_is_done_again_and_nothing_else`).
 - *Check:* the longest path a Vault without a work tree makes (git, the
   Index with its tables, the locks) is at most 120 characters with
   collection names of 255 bytes, columns of 255 characters with `fts`, a
@@ -362,8 +425,12 @@ D12, D13; P9.
 
 D15; P10.
 
-- [ ] The default segment cap 128 KiB.
-- [ ] `write` in each trailer.
+- [x] The default segment cap 128 KiB (`journal::tests`:
+      `a_journal_declared_without_a_cap_rotates_its_open_segment_at_128_kib`;
+      `idmap::tests`: `a_journal_with_no_cap_rotates_at_128_kib`).
+- [x] `write` in each trailer (`document_calls::tests`:
+      `a_trailer_carries_write_zero_and_one_without_write_parses`;
+      `tests/documents.rs`: `the_trailers_of_a_batch_name_each_document_with_its_own_note`).
 - *Check:* a journal without a cap rotates at 128 KiB; the trailers of a
   batch carry `write` 0 and `History` reads `write_id` as before.
 
@@ -378,12 +445,14 @@ does not rely on it.
       this version into a new Vault without a work tree.
 - *Check:* every Document of the new Vault has the bytes and the id it had;
   `Check` is clean.
+- Not started: deferred until after the release.
 
 ### G7. Docs
 
-- [ ] `03` (paths), `04` (STO-5, GIT-1, GIT-2, GIT-3, GIT-9, GIT-14), `05`
-      (the segment cap), `06` (the indexer by id, the Index's paths), `07`
-      and `14` (the new options), `CHANGELOG.md`, the README.
+- [x] `03` (paths), `04` (STO-5, STO-6, GIT-1, GIT-2, GIT-3, GIT-9, GIT-14,
+      GIT-15, GIT-16), `05` (the segment cap), `06` (the indexer by id, the
+      Index's paths), `07` and `14` (the new options), `CHANGELOG.md`, the
+      README: written on 22 October 2026, `bazel test //...` green.
 - *Check:* `bazel test //...` green, markdownlint included.
 
 ---

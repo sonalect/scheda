@@ -38,7 +38,7 @@ Do not confuse with the Vault. Scheda is the code. The Vault is the directory.
 
 ## 2. Units on disk
 
-**Vault** — a git working tree that holds collections and the marker file `.scheda.yaml` (`version: 3`, the generation of the Vault format, committed to git).
+**Vault** — a git working tree that holds collections and the marker file `.scheda.yaml` (`version: 4`, the generation of the Vault format, committed to git).
 
 The Vault root is a git repository. Documents are ordinary files in that tree. A mirror is optional. A person opens the Vault in an editor and in `git` without the library.
 
@@ -122,7 +122,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 Identity columns (`id`, `file`, `order`) are the library's. Every other column comes from a **Projector**.
 
-**Index generation** — one build of the tables of the Index: the folder `{vault}/.scheda/index/g-…/`. `current` names the live one. `Index.Reindex` makes another beside it and switches by one atomic write; the old one is removed an hour later. Not the **generation** of the Vault format.
+**Index generation** — one build of the tables of the Index: the folder `{vault}/.scheda/index/g{n}/`. `current` names the live one. `Index.Reindex` makes another beside it and switches by one atomic write; the old one is removed an hour later. Not the **generation** of the Vault format.
 
 **State token** — the opaque text that names a stored state of the Vault: the commit of the main repository and, when there is one, of the nested repository. A write returns the token of the state it made (`DocumentWriteResult.version`), `Vault.Info` the token of the stored state now, and `IndexState` two: `version`, the state the Index reflects, and `stored_version`, the stored state the indexer last saw (the Index is behind while they differ). Equal tokens are the same state; the caller compares them and passes them, nothing more.
 
