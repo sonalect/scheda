@@ -8,6 +8,34 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-22
+
+The Vault of generation 4 (docs/24): one pack per commit, a layout of
+folders by the bytes of the ids, an optional Vault without a work tree,
+and an Index with short paths. A write into a collection of 1 000 000
+Documents takes about 1 ms (it took 1.34 s); a write into a Vault without
+a work tree syncs 6 times.
+
+### Upgrading
+
+- A Vault of generation 3 (0.25 and before) is refused with `GENERATION`
+  and is not changed. The library does not move it: make a new Vault and
+  write its Documents again (or wait for the command-line move).
+- To get the fast writes, open new Vaults with
+  `OpenOptions.work_tree = WORK_TREE_NONE` and, for a fixed branch,
+  `OpenOptions.initial_branch` (for example `main`). Both are new fields;
+  code that builds `OpenOptions` from `default()` keeps compiling.
+- The Index is rebuilt once on the first open by this version.
+
+### Known issues
+
+- Anonymous memory grows with writes, about 1.2 KB a write through a
+  Vault without a work tree (13 MiB after 2 000 writes, 136 MiB after
+  100 000).
+- A round of the indexer cut by `Close` or a kill leaves its Lance files
+  with the umask's modes, and `Check` reports them until a later round
+  rewrites them.
+
 ### Added
 
 - `OpenOptions.work_tree`, `VaultInfo.work_tree`, and the flag
@@ -3068,6 +3096,7 @@ Defects of `0.21.0` that a caller could meet:
 ## Links
 
 - [Unreleased]
+- [0.26.0]
 - [0.25.0]
 - [0.24.1]
 - [0.24.0]
@@ -3129,7 +3158,8 @@ Defects of `0.21.0` that a caller could meet:
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/sonalect/scheda/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/sonalect/scheda/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/sonalect/scheda/releases/tag/v0.26.0
 [0.25.0]: https://github.com/sonalect/scheda/releases/tag/v0.25.0
 [0.24.1]: https://github.com/sonalect/scheda/releases/tag/v0.24.1
 [0.24.0]: https://github.com/sonalect/scheda/releases/tag/v0.24.0

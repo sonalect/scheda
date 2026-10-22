@@ -1,5 +1,5 @@
 {
-  "checksum": "f5a2edbef9a175c5e96da155acc4c7229a5d458c3474c2915245de903cfa262f",
+  "checksum": "a9170e102b95ab34f1a5c93d9b33a0887b3e48f011e539b5798fe8f25163a0e6",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -24114,7 +24114,7 @@
       ],
       "version": "0.1.30"
     },
-    "scheda 0.25.0": {
+    "scheda 0.26.0": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -24210,9 +24210,9 @@
           }
         }
       ],
-      "version": "0.25.0"
+      "version": "0.26.0"
     },
-    "scheda-api 0.25.0": {
+    "scheda-api 0.26.0": {
       "common_attrs": {
         "deps": [
           {
@@ -24255,9 +24255,9 @@
           }
         }
       ],
-      "version": "0.25.0"
+      "version": "0.26.0"
     },
-    "scheda-blocking 0.25.0": {
+    "scheda-blocking 0.26.0": {
       "common_attrs": {
         "deps": [
           {
@@ -24284,9 +24284,9 @@
           }
         }
       ],
-      "version": "0.25.0"
+      "version": "0.26.0"
     },
-    "scheda-cli 0.25.0": {
+    "scheda-cli 0.26.0": {
       "common_attrs": {
         "deps": [
           {
@@ -24341,7 +24341,7 @@
       "package_url": "https://github.com/sonalect/scheda",
       "repository": null,
       "targets": [],
-      "version": "0.25.0"
+      "version": "0.26.0"
     },
     "schemars 0.9.0": {
       "common_attrs": {
@@ -31398,9 +31398,9 @@
   ],
   "direct_dev_deps": [],
   "workspace_members": {
-    "scheda 0.25.0": "rust/scheda",
-    "scheda-api 0.25.0": "rust/api",
-    "scheda-blocking 0.25.0": "rust/blocking",
-    "scheda-cli 0.25.0": "rust/cli"
+    "scheda 0.26.0": "rust/scheda",
+    "scheda-api 0.26.0": "rust/api",
+    "scheda-blocking 0.26.0": "rust/blocking",
+    "scheda-cli 0.26.0": "rust/cli"
   }
 }
