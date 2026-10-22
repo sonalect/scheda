@@ -8,6 +8,9 @@ explicit permission (`.claude/rules/measure-once.md`).
 
 ## Release
 
+Released as 0.26.0 on 22 October 2026 (commit 2b033d2, tag v0.26.0,
+https://github.com/sonalect/scheda/releases/tag/v0.26.0).
+
 When G1–G7 work and the result holds up, publish the release (0.26.0,
 breaking: `.claude/skills/versioning/SKILL.md`) without waiting for the
 owner, as he asked (22 October 2026). The anchor consumer's agent then

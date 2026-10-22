@@ -18,11 +18,10 @@ Project state, deferred work, and measurements that outlive one session
 
 ## Pointers
 
-- Current work order: `docs/24-generation-4.md` — the Vault of
-  generation 4 (approved by the owner on 21 October 2026: D1–D15, P1–P10;
-  stages G1–G7, G1 started); the measurements are in `folder-layout.md`.
-  Right after it, the change feed (S5) as a minor release of its own with
-  no format change.
+- Generation 4 (`docs/24-generation-4.md`) is released as 0.26.0 (22 October
+  2026); what is deferred, the known issues, and the measurements are in
+  `generation-4-known-issues.md`. Next: the deferred items there, then the
+  change feed (S5) as a minor release of its own with no format change.
 - Before the release: `docs/23-full-review.md` — the full review of
   20 October 2026 on `main` at `34e61d1` (R1–R22, decisions D1–D9,
   stages S1–S5), approved by the owner the same day: every finding is
