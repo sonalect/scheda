@@ -43,8 +43,8 @@ jobs:
         - /opt/pipx:/mnt/drop/pipx
     timeout-minutes: 90
     env:
-      BAZELISK_VERSION: 1.29.0
-      BAZELISK_SHA256: 5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
+      BAZELISK_VERSION: 1.30.0
+      BAZELISK_SHA256: a248ae2b2b62b5baebb748f6fba7203bff1a27e5d01b55399a8406744cb539e8
       BAZEL_DISK_CACHE: /github/home/.cache/bazel-disk
       BAZEL_REPO_CACHE: /github/home/.cache/bazel-repo
     steps:

@@ -1339,6 +1339,15 @@ mod tests {
             OpenOptions::default().with_index_wait_timeout_ms(0),
             OpenOptions::default().with_filter_max_depth(0),
             OpenOptions::default().with_filter_max_depth(101),
+            // Values no enum defines: refused, not taken as unset.
+            OpenOptions {
+                mode: Some(buffa::EnumValue::Unknown(99)),
+                ..OpenOptions::default()
+            },
+            OpenOptions {
+                work_tree: Some(buffa::EnumValue::Unknown(99)),
+                ..OpenOptions::default()
+            },
         ] {
             let error = open(&scratch.0, options).await.unwrap_err();
             assert!(error.is(VaultErrorCode::InvalidArgument));

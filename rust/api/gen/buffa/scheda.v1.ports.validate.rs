@@ -1476,7 +1476,93 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
                     for_key: false,
                 });
         }
-        if self.kind.is_some() {}
+        if self.kind.is_some() {
+            if let Some(v) = self.kind {
+                #[allow(unused_imports, reason = "only closed enums need the trait")]
+                use ::buffa::Enumeration as _;
+                {
+                    let raw_val: i32 = v.to_i32();
+                    if <scheda::v1::ColumnKind as ::buffa::Enumeration>::from_i32(
+                            raw_val,
+                        )
+                        .is_none()
+                    {
+                        violations
+                            .push(::protovalidate_buffa::Violation {
+                                field: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(2i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("kind")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(16i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("enum")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                        None, value_type : None, subscript : None, },
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(2i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("defined_only")),
+                                        field_type : Some(::protovalidate_buffa::FieldType::Bool),
+                                        key_type : None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule_id: ::std::borrow::Cow::Borrowed("enum.defined_only"),
+                                message: ::std::borrow::Cow::Owned(
+                                    ::std::format!(
+                                        "value {} is not a defined enum value", raw_val
+                                    ),
+                                ),
+                                for_key: false,
+                            });
+                    }
+                }
+                {
+                    const DISALLOWED: &[i32] = &[0i32];
+                    let raw_val: i32 = v.to_i32();
+                    if DISALLOWED.contains(&raw_val) {
+                        violations
+                            .push(::protovalidate_buffa::Violation {
+                                field: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(2i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("kind")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(16i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("enum")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                        None, value_type : None, subscript : None, },
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(4i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("not_in")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Int32), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule_id: ::std::borrow::Cow::Borrowed("enum.not_in"),
+                                message: ::std::borrow::Cow::Owned(
+                                    ::std::format!(
+                                        "value {} must not be in {:?}", raw_val, DISALLOWED
+                                    ),
+                                ),
+                                for_key: false,
+                            });
+                    }
+                }
+            }
+        }
         {
             if !((((!(self.vector.unwrap_or(false)))
                 || ((self
@@ -1560,53 +1646,6 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
                         ),
                         message: ::std::borrow::Cow::Borrowed(
                             "name must not be id, order, file, or collection",
-                        ),
-                        for_key: false,
-                    });
-            }
-        }
-        if let ::core::option::Option::Some(__cel_inner) = self.kind.as_ref() {
-            let __cel_this = ({
-                use ::buffa::Enumeration as _;
-                (*__cel_inner).to_i32() as i64
-            });
-            if !(([
-                (1i64 as i64),
-                (2i64 as i64),
-                (3i64 as i64),
-                (4i64 as i64),
-                (5i64 as i64),
-            ]
-                .as_slice())
-                .iter()
-                .any(|__x| (*__x) == ((__cel_this))))
-            {
-                violations
-                    .push(::protovalidate_buffa::Violation {
-                        field: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(2i32), field_name :
-                                Some(::std::borrow::Cow::Borrowed("kind")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Enum), key_type :
-                                None, value_type : None, subscript : None, },
-                            ],
-                        },
-                        rule: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(23), field_name :
-                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Message), key_type :
-                                None, value_type : None, subscript :
-                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
-                            ],
-                        },
-                        rule_id: ::std::borrow::Cow::Borrowed(
-                            "index_column.kind.defined",
-                        ),
-                        message: ::std::borrow::Cow::Borrowed(
-                            "must be a defined ColumnKind value other than COLUMN_KIND_UNSPECIFIED",
                         ),
                         for_key: false,
                     });
@@ -1783,7 +1822,93 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
                     for_key: false,
                 });
         }
-        if self.kind.is_some() {}
+        if self.kind.is_some() {
+            if let Some(v) = self.kind {
+                #[allow(unused_imports, reason = "only closed enums need the trait")]
+                use ::buffa::Enumeration as _;
+                {
+                    let raw_val: i32 = v.to_i32();
+                    if <scheda::v1::ColumnKind as ::buffa::Enumeration>::from_i32(
+                            raw_val,
+                        )
+                        .is_none()
+                    {
+                        violations
+                            .push(::protovalidate_buffa::Violation {
+                                field: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(2i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("kind")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(16i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("enum")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                        None, value_type : None, subscript : None, },
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(2i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("defined_only")),
+                                        field_type : Some(::protovalidate_buffa::FieldType::Bool),
+                                        key_type : None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule_id: ::std::borrow::Cow::Borrowed("enum.defined_only"),
+                                message: ::std::borrow::Cow::Owned(
+                                    ::std::format!(
+                                        "value {} is not a defined enum value", raw_val
+                                    ),
+                                ),
+                                for_key: false,
+                            });
+                    }
+                }
+                {
+                    const DISALLOWED: &[i32] = &[0i32];
+                    let raw_val: i32 = v.to_i32();
+                    if DISALLOWED.contains(&raw_val) {
+                        violations
+                            .push(::protovalidate_buffa::Violation {
+                                field: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(2i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("kind")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(16i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("enum")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                        None, value_type : None, subscript : None, },
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(4i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("not_in")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Int32), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule_id: ::std::borrow::Cow::Borrowed("enum.not_in"),
+                                message: ::std::borrow::Cow::Owned(
+                                    ::std::format!(
+                                        "value {} must not be in {:?}", raw_val, DISALLOWED
+                                    ),
+                                ),
+                                for_key: false,
+                            });
+                    }
+                }
+            }
+        }
         {
             if !((((!(self.vector.unwrap_or(false)))
                 || ((self
@@ -1867,53 +1992,6 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
                         ),
                         message: ::std::borrow::Cow::Borrowed(
                             "name must not be id, order, file, or collection",
-                        ),
-                        for_key: false,
-                    });
-            }
-        }
-        if let ::core::option::Option::Some(__cel_inner) = self.kind.as_ref() {
-            let __cel_this = ({
-                use ::buffa::Enumeration as _;
-                (*__cel_inner).to_i32() as i64
-            });
-            if !(([
-                (1i64 as i64),
-                (2i64 as i64),
-                (3i64 as i64),
-                (4i64 as i64),
-                (5i64 as i64),
-            ]
-                .as_slice())
-                .iter()
-                .any(|__x| (*__x) == ((__cel_this))))
-            {
-                violations
-                    .push(::protovalidate_buffa::Violation {
-                        field: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(2i32), field_name :
-                                Some(::std::borrow::Cow::Borrowed("kind")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Enum), key_type :
-                                None, value_type : None, subscript : None, },
-                            ],
-                        },
-                        rule: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(23), field_name :
-                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Message), key_type :
-                                None, value_type : None, subscript :
-                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
-                            ],
-                        },
-                        rule_id: ::std::borrow::Cow::Borrowed(
-                            "index_column.kind.defined",
-                        ),
-                        message: ::std::borrow::Cow::Borrowed(
-                            "must be a defined ColumnKind value other than COLUMN_KIND_UNSPECIFIED",
                         ),
                         for_key: false,
                     });

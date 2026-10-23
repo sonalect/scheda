@@ -196,16 +196,7 @@ message Schema {
   // Redundant, and allowed, on `encrypted`, which no Index holds. A change
   // never makes the Index stale: the next round rebuilds the table of this
   // collection.
-  IndexScope index_scope = 6 [(buf.validate.field) = {
-    enum: {defined_only: true}
-    cel: [
-      {
-        id: "schema.index_scope.defined"
-        message: "must be a defined IndexScope value"
-        expression: "this in [0, 1, 2, 3]"
-      }
-    ]
-  }];
+  IndexScope index_scope = 6 [(buf.validate.field).enum.defined_only = true];
 }
 
 // The `standard` kind. No option of its own.

@@ -169,9 +169,9 @@ The owner deferred the rest to a later session (21 October 2026):
   protocontract pull above). **Decided 23 October 2026:** protocontract
   starts no item for a reader that is gone (`sender.is_closed()` before
   each `next()` in `offload::pump`); handed to an agent in
-  `protocontract-buffa.rs` by the owner. When `protocontract` 0.4.2 is
-  out, Scheda bumps it in `Cargo.lock` (the range `0.4.1` already takes
-  it) and repins; no other change.
+  `protocontract-buffa.rs` by the owner. **Done 24 October 2026:**
+  `protocontract` 0.4.2 is in (floor raised to it: Scheda's `Close` relies
+  on the fix), with `bazel_utils` 0.4.3.
 - Bazel's note "tests whose specified size is too big" stays: it measures
   against the default ranges, not `--test_timeout`, so a size right for a
   workstation is wrong for a runner and the other way round.

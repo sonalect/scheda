@@ -24,9 +24,6 @@ Project state, deferred work, and measurements that outlive one session
   items, then the change feed (S5) as a minor release of its own with no
   format change; S5 has no work-order document yet.
 - Open owner decisions: the Lance fork (`lance-binary-size.md`).
-- In progress elsewhere: a blocking port called after `Close`, fixed in
-  protocontract; Scheda bumps the lock when 0.4.2 is out
-  (`ci-platforms.md`).
 - Done work orders, for history: `docs/17`–`24` (the full review of
   20 October 2026 is `23`; the Index on Lance is `21`; Scheda on tokio is
   `22`; the 0.22 contract is `20`). The Lance spike stays on the branch

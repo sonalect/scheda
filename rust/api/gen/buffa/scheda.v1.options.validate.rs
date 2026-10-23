@@ -251,6 +251,50 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                     });
             }
         }
+        if let Some(v) = self.mode {
+            #[allow(unused_imports, reason = "only closed enums need the trait")]
+            use ::buffa::Enumeration as _;
+            {
+                let raw_val: i32 = v.to_i32();
+                if <scheda::v1::OpenMode as ::buffa::Enumeration>::from_i32(raw_val)
+                    .is_none()
+                {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(7i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("mode")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(16i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("enum")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(2i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("defined_only")),
+                                    field_type : Some(::protovalidate_buffa::FieldType::Bool),
+                                    key_type : None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("enum.defined_only"),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value {} is not a defined enum value", raw_val
+                                ),
+                            ),
+                            for_key: false,
+                        });
+                }
+            }
+        }
         if let Some(v) = self.write_timeout_ms {
             if v < 1u32 {
                 violations
@@ -407,6 +451,50 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                     });
             }
         }
+        if let Some(v) = self.work_tree {
+            #[allow(unused_imports, reason = "only closed enums need the trait")]
+            use ::buffa::Enumeration as _;
+            {
+                let raw_val: i32 = v.to_i32();
+                if <scheda::v1::WorkTree as ::buffa::Enumeration>::from_i32(raw_val)
+                    .is_none()
+                {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(12i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("work_tree")), field_type
+                                    : Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(16i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("enum")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(2i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("defined_only")),
+                                    field_type : Some(::protovalidate_buffa::FieldType::Bool),
+                                    key_type : None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("enum.defined_only"),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value {} is not a defined enum value", raw_val
+                                ),
+                            ),
+                            for_key: false,
+                        });
+                }
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.mirror.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
             if !((::protovalidate_buffa::rules::string::is_uri(((__cel_this)))
@@ -440,87 +528,6 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                         ),
                         message: ::std::borrow::Cow::Borrowed(
                             "must be an absolute URI (https://…, ssh://…, file:///…) or an scp-style address (git@host:path)",
-                        ),
-                        for_key: false,
-                    });
-            }
-        }
-        if let ::core::option::Option::Some(__cel_inner) = self.mode.as_ref() {
-            let __cel_this = ({
-                use ::buffa::Enumeration as _;
-                (*__cel_inner).to_i32() as i64
-            });
-            if !(([(0i64 as i64), (1i64 as i64), (2i64 as i64), (3i64 as i64)]
-                .as_slice())
-                .iter()
-                .any(|__x| (*__x) == ((__cel_this))))
-            {
-                violations
-                    .push(::protovalidate_buffa::Violation {
-                        field: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(7i32), field_name :
-                                Some(::std::borrow::Cow::Borrowed("mode")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Enum), key_type :
-                                None, value_type : None, subscript : None, },
-                            ],
-                        },
-                        rule: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(23), field_name :
-                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Message), key_type :
-                                None, value_type : None, subscript :
-                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
-                            ],
-                        },
-                        rule_id: ::std::borrow::Cow::Borrowed(
-                            "open_options.mode.defined",
-                        ),
-                        message: ::std::borrow::Cow::Borrowed(
-                            "must be a defined OpenMode value",
-                        ),
-                        for_key: false,
-                    });
-            }
-        }
-        if let ::core::option::Option::Some(__cel_inner) = self.work_tree.as_ref() {
-            let __cel_this = ({
-                use ::buffa::Enumeration as _;
-                (*__cel_inner).to_i32() as i64
-            });
-            if !(([(0i64 as i64), (1i64 as i64), (2i64 as i64)].as_slice())
-                .iter()
-                .any(|__x| (*__x) == ((__cel_this))))
-            {
-                violations
-                    .push(::protovalidate_buffa::Violation {
-                        field: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(12i32), field_name :
-                                Some(::std::borrow::Cow::Borrowed("work_tree")), field_type
-                                : Some(::protovalidate_buffa::FieldType::Enum), key_type :
-                                None, value_type : None, subscript : None, },
-                            ],
-                        },
-                        rule: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(23), field_name :
-                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Message), key_type :
-                                None, value_type : None, subscript :
-                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
-                            ],
-                        },
-                        rule_id: ::std::borrow::Cow::Borrowed(
-                            "open_options.work_tree.defined",
-                        ),
-                        message: ::std::borrow::Cow::Borrowed(
-                            "must be a defined WorkTree value",
                         ),
                         for_key: false,
                     });
@@ -798,6 +805,50 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                     });
             }
         }
+        if let Some(v) = self.mode {
+            #[allow(unused_imports, reason = "only closed enums need the trait")]
+            use ::buffa::Enumeration as _;
+            {
+                let raw_val: i32 = v.to_i32();
+                if <scheda::v1::OpenMode as ::buffa::Enumeration>::from_i32(raw_val)
+                    .is_none()
+                {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(7i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("mode")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(16i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("enum")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(2i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("defined_only")),
+                                    field_type : Some(::protovalidate_buffa::FieldType::Bool),
+                                    key_type : None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("enum.defined_only"),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value {} is not a defined enum value", raw_val
+                                ),
+                            ),
+                            for_key: false,
+                        });
+                }
+            }
+        }
         if let Some(v) = self.write_timeout_ms {
             if v < 1u32 {
                 violations
@@ -954,6 +1005,50 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                     });
             }
         }
+        if let Some(v) = self.work_tree {
+            #[allow(unused_imports, reason = "only closed enums need the trait")]
+            use ::buffa::Enumeration as _;
+            {
+                let raw_val: i32 = v.to_i32();
+                if <scheda::v1::WorkTree as ::buffa::Enumeration>::from_i32(raw_val)
+                    .is_none()
+                {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(12i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("work_tree")), field_type
+                                    : Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(16i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("enum")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(2i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("defined_only")),
+                                    field_type : Some(::protovalidate_buffa::FieldType::Bool),
+                                    key_type : None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("enum.defined_only"),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value {} is not a defined enum value", raw_val
+                                ),
+                            ),
+                            for_key: false,
+                        });
+                }
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.mirror.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
             if !((::protovalidate_buffa::rules::string::is_uri(((__cel_this)))
@@ -987,87 +1082,6 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                         ),
                         message: ::std::borrow::Cow::Borrowed(
                             "must be an absolute URI (https://…, ssh://…, file:///…) or an scp-style address (git@host:path)",
-                        ),
-                        for_key: false,
-                    });
-            }
-        }
-        if let ::core::option::Option::Some(__cel_inner) = self.mode.as_ref() {
-            let __cel_this = ({
-                use ::buffa::Enumeration as _;
-                (*__cel_inner).to_i32() as i64
-            });
-            if !(([(0i64 as i64), (1i64 as i64), (2i64 as i64), (3i64 as i64)]
-                .as_slice())
-                .iter()
-                .any(|__x| (*__x) == ((__cel_this))))
-            {
-                violations
-                    .push(::protovalidate_buffa::Violation {
-                        field: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(7i32), field_name :
-                                Some(::std::borrow::Cow::Borrowed("mode")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Enum), key_type :
-                                None, value_type : None, subscript : None, },
-                            ],
-                        },
-                        rule: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(23), field_name :
-                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Message), key_type :
-                                None, value_type : None, subscript :
-                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
-                            ],
-                        },
-                        rule_id: ::std::borrow::Cow::Borrowed(
-                            "open_options.mode.defined",
-                        ),
-                        message: ::std::borrow::Cow::Borrowed(
-                            "must be a defined OpenMode value",
-                        ),
-                        for_key: false,
-                    });
-            }
-        }
-        if let ::core::option::Option::Some(__cel_inner) = self.work_tree.as_ref() {
-            let __cel_this = ({
-                use ::buffa::Enumeration as _;
-                (*__cel_inner).to_i32() as i64
-            });
-            if !(([(0i64 as i64), (1i64 as i64), (2i64 as i64)].as_slice())
-                .iter()
-                .any(|__x| (*__x) == ((__cel_this))))
-            {
-                violations
-                    .push(::protovalidate_buffa::Violation {
-                        field: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(12i32), field_name :
-                                Some(::std::borrow::Cow::Borrowed("work_tree")), field_type
-                                : Some(::protovalidate_buffa::FieldType::Enum), key_type :
-                                None, value_type : None, subscript : None, },
-                            ],
-                        },
-                        rule: ::protovalidate_buffa::FieldPath {
-                            elements: ::std::vec![
-                                ::protovalidate_buffa::FieldPathElement { field_number :
-                                Some(23), field_name :
-                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
-                                Some(::protovalidate_buffa::FieldType::Message), key_type :
-                                None, value_type : None, subscript :
-                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
-                            ],
-                        },
-                        rule_id: ::std::borrow::Cow::Borrowed(
-                            "open_options.work_tree.defined",
-                        ),
-                        message: ::std::borrow::Cow::Borrowed(
-                            "must be a defined WorkTree value",
                         ),
                         for_key: false,
                     });

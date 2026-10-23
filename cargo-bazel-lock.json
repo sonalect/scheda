@@ -1,5 +1,5 @@
 {
-  "checksum": "201b3b9115d7c02966ad50de548ef4eeabfa07756e156d07852b6666f16afda5",
+  "checksum": "cb27dd794269fd21e3c96c8ed7945e379832a28286c6b21325458ceec4237bea",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -21431,7 +21431,7 @@
       ],
       "version": "0.14.4"
     },
-    "protocontract 0.4.1": {
+    "protocontract 0.4.2": {
       "additive_build_file_content": "filegroup(\n    name = \"protos\",\n    srcs = glob([\"proto/**/*.proto\"]),\n    visibility = [\"//visibility:public\"],\n)\n",
       "common_attrs": {
         "crate_features": [
@@ -21466,8 +21466,8 @@
       "package_url": "https://github.com/sonalect/protocontract-buffa.rs",
       "repository": {
         "Http": {
-          "sha256": "17a81044c8afd783f8d5387df9236de532927aad08c46fcdbdda20bdf18467e9",
-          "url": "https://static.crates.io/crates/protocontract/0.4.1/download"
+          "sha256": "a45234b708fe5d068f04ff1df8a883e6a307a25a290f6570f8a6a31c0167cc7c",
+          "url": "https://static.crates.io/crates/protocontract/0.4.2/download"
         }
       },
       "targets": [
@@ -21478,7 +21478,7 @@
           }
         }
       ],
-      "version": "0.4.1"
+      "version": "0.4.2"
     },
     "protovalidate-buffa 0.7.2": {
       "common_attrs": {
@@ -24163,7 +24163,7 @@
             "target": "libz_sys"
           },
           {
-            "id": "protocontract 0.4.1",
+            "id": "protocontract 0.4.2",
             "target": "protocontract"
           },
           {
@@ -24224,7 +24224,7 @@
             "target": "buffa_types"
           },
           {
-            "id": "protocontract 0.4.1",
+            "id": "protocontract 0.4.2",
             "target": "protocontract"
           },
           {
@@ -24261,7 +24261,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "protocontract 0.4.1",
+            "id": "protocontract 0.4.2",
             "target": "protocontract"
           },
           {
@@ -24310,7 +24310,7 @@
             "target": "model2vec_rs"
           },
           {
-            "id": "protocontract 0.4.1",
+            "id": "protocontract 0.4.2",
             "target": "protocontract"
           },
           {
@@ -31385,7 +31385,7 @@
     "libz-sys 1.1.30",
     "mimalloc 3.5.3",
     "model2vec-rs 0.3.0",
-    "protocontract 0.4.1",
+    "protocontract 0.4.2",
     "protovalidate-buffa 0.7.2",
     "regex 1.13.1",
     "serde 1.0.229",

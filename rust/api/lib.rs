@@ -19,6 +19,10 @@ mod proto;
 #[rustfmt::skip]
 #[allow(unused_imports)]
 mod validators {
+    // The files are written to sit beside the messages: a type the plugin
+    // names in full (an enum a rule checks) is a path from the root of the
+    // messages, `scheda::v1::…`.
+    use crate::proto::scheda;
     use crate::proto::scheda::v1::*;
 
     include!("gen/buffa/scheda.v1.collection.validate.rs");

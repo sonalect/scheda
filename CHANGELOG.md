@@ -37,6 +37,17 @@ API or on-disk format changes bump the minor.
   `REPLICATION` as "the Vault cannot be read" should also handle
   `DATA_LOSS`. `REPLICATION` stays for a failure of the exchange with the
   mirror and for any git failure no other code names.
+- Dependencies and tools: `protocontract` 0.4.2, `bazel_utils` 0.4.3,
+  Buf CLI v1.75.0, `protoc-gen-protocontract-buffa` v0.4.2,
+  `protoc-gen-protovalidate-buffa` v0.10.5, and bazelisk 1.30.0 in CI. The
+  new validator checks `enum.defined_only` on enum fields with presence
+  itself, so the CEL rules that did it by hand are gone: an undefined
+  `OpenOptions.mode`, `OpenOptions.work_tree`, `Schema.index_scope`, or
+  `IndexColumn.kind` is still `INVALID_ARGUMENT`, now with the standard
+  rule id `enum.defined_only` in the message.
+- The Python audit also ignores GHSA-xmj3-9gf7-h52w (setuptools, fixed in
+  84.1.0): vllm 0.32.0, the newest, still caps `setuptools<81`, as for
+  PYSEC-2026-3447.
 - Dependencies are stated as caret ranges, not exact `=` pins. Scheda no
   longer forces its exact versions on a consumer: a consumer's own
   `Cargo.lock` picks any compatible version (for example a tokio patch
@@ -45,6 +56,10 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- A blocking port (an `Embedder`, `Reranker`, or `Projector` given in its
+  blocking form) is no longer called once more after `Vault.Close` has
+  returned: `protocontract` 0.4.2 starts no item for a reader that is gone.
+  Scheda now needs `protocontract` 0.4.2 or later.
 - A `text list` column marked `scalar_index` now gets an index (Lance's
   label list): a `term` or `terms` filter on it reads the index instead of
   every row. Before, no index was made for such a column, silently. The

@@ -53,16 +53,7 @@ message OpenOptions {
     }
   }];
   // What `open` may do with the path. Unset: `OPEN_MODE_OPEN_OR_CREATE`.
-  OpenMode mode = 7 [(buf.validate.field) = {
-    enum: {defined_only: true}
-    cel: [
-      {
-        id: "open_options.mode.defined"
-        message: "must be a defined OpenMode value"
-        expression: "this in [0, 1, 2, 3]"
-      }
-    ]
-  }];
+  OpenMode mode = 7 [(buf.validate.field).enum.defined_only = true];
   // How long a write call waits for the write lock, in milliseconds. Past
   // it the call is `ABORTED` and writes nothing; once it holds the lock it
   // finishes. Unset: 60000.
@@ -97,16 +88,7 @@ message OpenOptions {
   // applies when `open` makes a Vault, a new one or a clone. On an attach
   // to a Vault that exists, a set value must be the Vault's own, or the
   // open fails with `INVALID_ARGUMENT`. Unset: `WORK_TREE_FILES`.
-  WorkTree work_tree = 12 [(buf.validate.field) = {
-    enum: {defined_only: true}
-    cel: [
-      {
-        id: "open_options.work_tree.defined"
-        message: "must be a defined WorkTree value"
-        expression: "this in [0, 1, 2]"
-      }
-    ]
-  }];
+  WorkTree work_tree = 12 [(buf.validate.field).enum.defined_only = true];
   // The branch a Vault that `open` makes starts on, a new one or a clone's
   // first write. A name that is not a valid branch name is
   // `INVALID_ARGUMENT`. Unset: git's `init.defaultBranch`, or `main`.
