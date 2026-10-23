@@ -127,6 +127,19 @@ vector index: 7 446 vectors, below 10 000).
   embedder is set; a column with no vector yet waits for the first one
   (`store::holds_vectors`). Scheda's test embedders give 8 values (the 4
   or 3 they gave, padded with zeros: the cosine is unchanged).
+- Updates of the indices (24 October 2026, on the owner's word): Scheda
+  called `optimize_indices(merge(4))`, which in Lance 13 merges the new
+  rows with the latest 4 segments, so every update rewrote the whole
+  index (D11 meant "merge past 4 deltas"). Now an update is
+  `OptimizeOptions::append()` (a segment for the new rows alone) and
+  `merge(4)` once an index has more than 4 segments, the pattern Lance's
+  `num_indices_to_merge` documents. Grown from 5 000 to 100 000 real
+  vectors in 19 updates: 348 MB written by `merge(4)`, 108 MB by this,
+  44 MB by `append()` alone (20 segments, 26 ms a query), 82 MB by Lance's
+  own `OptimizeOptions::new()` (up to 7 segments, 26 ms, it joined 71
+  partitions into 1 and split them to 13); recall 1.000 in every mode.
+  `unindexed_rows` now asks Lance (`unindexed_fragments`) instead of
+  reading one segment's bitmap. `store::tests::an_update_adds_a_segment_and_the_segments_merge_past_the_bound`.
 - Not measured: 1 000 000 rows (100 000 decided it), a release build, the
   `Matrix` rotation, the reranker end to end (IVF_RQ's top 50 equals the
   exact top 50 on every query, so the reranker sees the same candidates).

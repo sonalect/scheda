@@ -49,7 +49,7 @@
 //! **Typed only.** A delete, an upsert, and a filter are built as typed
 //! expressions; no text of a query language is ever made from values.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,8 +71,8 @@ use lance::deps::arrow_array::{
 };
 use lance::deps::arrow_schema::{DataType, Field, Schema, SchemaRef};
 use lance::deps::datafusion::prelude::{Expr, col, lit};
-use lance::index::DatasetIndexExt;
 use lance::index::vector::VectorIndexParams;
+use lance::index::{DatasetIndexExt, DatasetIndexInternalExt};
 use lance_index::IndexType;
 use lance_index::optimize::OptimizeOptions;
 use lance_index::scalar::{InvertedIndexParams, ScalarIndexParams};
@@ -116,8 +116,10 @@ const UNINDEXED_ROWS: usize = 5_000;
 /// The rounds after which the indices are brought over new rows anyway.
 const ROUNDS_PER_INDEX_UPDATE: u64 = 50;
 
-/// Deltas of a vector index merged into one once there are more.
-const VECTOR_INDEX_DELTAS: usize = 4;
+/// Segments of an index merged into one once one of its indices has more.
+/// Bringing an index over new rows adds a segment for those rows alone and
+/// leaves the others as written; a search reads every segment.
+const INDEX_SEGMENTS: usize = 4;
 
 /// Bits per dimension of the RaBitQ codes of a vector index: the fewest
 /// Lance takes. The search ranks its candidates again with the full
@@ -1284,7 +1286,9 @@ async fn append(dataset: &Arc<Dataset>, batch: RecordBatch) -> Result<Arc<Datase
 /// number of rows.
 /// When it made none, it brings the indices over the rows they do not
 /// cover once more than [`UNINDEXED_ROWS`] are left out, or every
-/// [`ROUNDS_PER_INDEX_UPDATE`] rounds.
+/// [`ROUNDS_PER_INDEX_UPDATE`] rounds: a segment for those rows on each
+/// index, and the latest segments merged into one once an index has more
+/// than [`INDEX_SEGMENTS`].
 async fn keep_indexed(
     dataset: &mut Dataset,
     scalar: &[(String, IndexType)],
@@ -1355,7 +1359,13 @@ async fn keep_indexed(
     if !created {
         let unindexed = unindexed_rows(dataset).await?;
         if unindexed > UNINDEXED_ROWS || round.is_multiple_of(ROUNDS_PER_INDEX_UPDATE) {
-            let options = OptimizeOptions::merge(VECTOR_INDEX_DELTAS);
+            // Lance's pattern for its index segments: an update appends one,
+            // and the caller merges the latest ones once they pile up.
+            let options = if most_segments(dataset).await? > INDEX_SEGMENTS {
+                OptimizeOptions::merge(INDEX_SEGMENTS)
+            } else {
+                OptimizeOptions::append()
+            };
             dataset
                 .optimize_indices(&options)
                 .await
@@ -1398,24 +1408,33 @@ fn partitions(rows: usize) -> usize {
     (rows as f64).sqrt().round().max(1.0) as usize
 }
 
-/// How many rows of `rows` no index covers yet, the most of any index.
+/// The most segments any index of `dataset` has: the one it was made with,
+/// and one more for each update since its latest segments were merged.
+async fn most_segments(dataset: &Dataset) -> Result<usize, Error> {
+    let indices = dataset.load_indices().await.map_err(lance_fault)?;
+    let mut segments: HashMap<&str, usize> = HashMap::new();
+    for index in indices.iter() {
+        *segments.entry(index.name.as_str()).or_default() += 1;
+    }
+    Ok(segments.into_values().max().unwrap_or(0))
+}
+
+/// How many rows of `rows` no index covers yet, the most of any index: the
+/// rows of the fragments that none of the index's segments covers, as
+/// Lance's `unindexed_fragments` finds them.
 async fn unindexed_rows(rows: &Dataset) -> Result<usize, Error> {
     let indices = rows.load_indices().await.map_err(lance_fault)?;
-    let total = rows.count_rows(None).await.map_err(lance_fault)?;
+    let names: BTreeSet<&str> = indices.iter().map(|index| index.name.as_str()).collect();
     let mut most = 0;
-    for index in indices.iter() {
-        let covered: usize = index
-            .fragment_bitmap
-            .as_ref()
-            .map(|bitmap| {
-                rows.get_fragments()
-                    .iter()
-                    .filter(|fragment| bitmap.contains(fragment.id() as u32))
-                    .map(|fragment| fragment.metadata().num_rows().unwrap_or(0))
-                    .sum()
-            })
-            .unwrap_or(0);
-        most = most.max(total.saturating_sub(covered));
+    for name in names {
+        let left: usize = rows
+            .unindexed_fragments(name)
+            .await
+            .map_err(lance_fault)?
+            .iter()
+            .map(|fragment| fragment.num_rows().unwrap_or(0))
+            .sum();
+        most = most.max(left);
     }
     Ok(most)
 }
@@ -1802,6 +1821,68 @@ mod tests {
         table.upsert(&[row(3, true)]).await.unwrap();
         table.maintain(2, None).await.unwrap();
         assert_eq!(vector_indices(Dataset::clone(&table.rows)).await, 1);
+    }
+
+    /// Each update of the indices adds a segment for the new rows alone;
+    /// once an index has more than [`INDEX_SEGMENTS`], the update merges the
+    /// latest ones into one, and every row stays covered.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_update_adds_a_segment_and_the_segments_merge_past_the_bound() {
+        const DIMENSIONS: usize = 16;
+        let scratch = Scratch::new("segments");
+        let shape = Shape {
+            columns: vec![column("topic", false, false, true)],
+            vectors: vec![String::from("topic")],
+            dimensions: Some(DIMENSIONS as u32),
+        };
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&shape), shape, None)
+            .await
+            .unwrap();
+        let row = |n: usize| {
+            let id = format!("r{n:05}");
+            Row {
+                file: format!("notes/{id}"),
+                order: id.clone(),
+                id,
+                values: BTreeMap::new(),
+                embeddings: BTreeMap::from([(
+                    String::from("topic"),
+                    vec![Embedding {
+                        position: 0,
+                        vector: vector_of(n, DIMENSIONS),
+                        digest: format!("d{n}"),
+                    }],
+                )]),
+            }
+        };
+        let vector_segments = |rows: Dataset| async move {
+            rows.load_indices()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|index| index.name.ends_with("_ivf_rq"))
+                .count()
+        };
+
+        let rows: Vec<Row> = (0..10).map(row).collect();
+        table.upsert(&rows).await.unwrap();
+        table.maintain(1, None).await.unwrap();
+        assert_eq!(vector_segments(Dataset::clone(&table.rows)).await, 1);
+        let mut seen = Vec::new();
+        for update in 1..=6 {
+            table.upsert(&[row(10 + update)]).await.unwrap();
+            // Every fiftieth round brings the indices over the new rows.
+            let round = ROUNDS_PER_INDEX_UPDATE * update as u64;
+            table.maintain(round, None).await.unwrap();
+            seen.push(vector_segments(Dataset::clone(&table.rows)).await);
+            let waiting = unindexed_rows(&Dataset::clone(&table.rows)).await.unwrap();
+            assert_eq!(waiting, 0, "update {update} covers every row");
+        }
+        assert_eq!(
+            seen,
+            [2, 3, 4, 5, 2, 3],
+            "appended, then merged past the bound"
+        );
     }
 
     /// Every kind of column with `scalar_index` gets an index that a filter

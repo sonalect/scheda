@@ -1,6 +1,6 @@
 # 21. The Index on Lance
 
-Document 21 of the Scheda package. Version 0.10, 24 October 2026.
+Document 21 of the Scheda package. Version 0.11, 24 October 2026.
 
 Status: approved by the owner on 19 October 2026. Decisions marked
 *settled* were taken with him in discussion; the others were proposed
@@ -194,9 +194,17 @@ compacts with `target_rows_per_fragment` 16 384 (Lance's default, about
 one million rows, rewrites the largest fragment on every compaction: the
 spike saw 10 GB rewritten each time); brings the indices over the new
 rows when more than 5 000 are unindexed (from about that many their
-exact scan costs more than the index) or every 50 rounds; merges the
-vector index deltas when there are more than 4
-(`OptimizeOptions::num_indices_to_merge`); and prunes a version an hour
+exact scan costs more than the index) or every 50 rounds, as one more
+segment of each index for those rows alone (`OptimizeOptions::append`),
+and merges an index's latest segments into one once it has more than 4
+(`OptimizeOptions::merge(4)`): the pattern Lance documents for its
+segments, since a search reads every one. Until 24 October 2026 every
+update was `merge(4)`, which in Lance 13 merges the new rows with the
+latest 4 segments: one segment, rewritten whole each time. Measured on
+IVF_RQ grown from 5 000 to 100 000 real vectors in 19 updates: 108 MB
+written against 348 MB, up to 5 segments, 12 ms a query against 10 ms,
+recall 1.000 both; Lance's own policy (`OptimizeOptions::new()`) wrote
+82 MB but left up to 7 segments at 26 ms a query. And prunes a version an hour
 after it was replaced, never with `delete_unverified`. Lance prunes by a
 version's own creation time, so the cutoff given is the creation time of
 the newest version made more than an hour ago (§8, C23). No read of the

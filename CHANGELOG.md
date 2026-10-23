@@ -36,6 +36,12 @@ API or on-disk format changes bump the minor.
   gets the IVF_RQ index beside the old one. To drop the old one, remove
   `{vault}/.scheda/index`; the Index is built again from `HEAD`, and its
   texts are embedded again.
+- Bringing the indices over new rows no longer rewrites them whole: each
+  update adds a segment for the new rows alone, and an index's latest
+  segments are merged into one once it has more than 4. Measured on a
+  vector index grown from 5 000 to 100 000 vectors in 19 updates: 108 MB
+  written instead of 348 MB, a query 12 ms instead of 10 ms, the same
+  hits.
 - An embedder's vectors must have a length that is a multiple of 8
   (`EmbedderDescriptor.dimensions`): the vector index, IVF_RQ, packs the
   code of a vector by 8 dimensions. An embedder of another length is now
