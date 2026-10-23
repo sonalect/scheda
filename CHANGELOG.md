@@ -54,6 +54,14 @@ API or on-disk format changes bump the minor.
   its Lance files with the umask's modes: it narrows them to the owner
   however it ends, so `Check` stays clean. The files of a killed round are
   narrowed by the next round.
+- `filelock`, which the Python sidecar lock (`uv.lock`) takes in through
+  vLLM, is 4.2.4 instead of 4.2.0: the older one has three advisories
+  (GHSA-v4x8-3wr5-3wq8, GHSA-2g95-wg33-c5x2, GHSA-crv4-6mhj-j5jh), fixed in
+  4.2.1; 4.2.4 was published 19 October 2026. `setuptools` stays 80.10.2
+  with GHSA-xmj3-9gf7-h52w (on Windows, a wheel's `namespace_packages.txt`
+  can place an `__init__.py` outside the target during a legacy install;
+  fixed in 84.1.0): vllm 0.32.0, the newest, takes `setuptools` below 81
+  only.
 
 ## [0.26.0] - 2026-10-22
 
