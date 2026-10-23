@@ -135,7 +135,7 @@ crates refer to them with `workspace = true`.
 
 ## Build
 
-The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.3.0**).
+The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.3.1**).
 Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
 Host architecture only: no linux `amd64` / `arm64` cross targets.
 Target crates use the platform CRT (dynamic glibc on Linux). Only `clone`,
