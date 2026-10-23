@@ -236,7 +236,9 @@ pub struct EmbedderDescriptorView<'a> {
     ///
     /// Field 1: `model_id`
     pub model_id: ::core::option::Option<&'a str>,
-    /// The length of each vector. At least 1.
+    /// The length of each vector: at least 1, and a multiple of 8. The vector
+    /// index (IVF_RQ) packs the code of a vector by 8 dimensions, so another
+    /// length is refused when the embedder is set, not when the index is made.
     ///
     /// Field 2: `dimensions`
     pub dimensions: ::core::option::Option<u32>,
@@ -474,7 +476,9 @@ impl EmbedderDescriptorOwnedView {
     pub fn model_id(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().model_id
     }
-    /// The length of each vector. At least 1.
+    /// The length of each vector: at least 1, and a multiple of 8. The vector
+    /// index (IVF_RQ) packs the code of a vector by 8 dimensions, so another
+    /// length is refused when the embedder is set, not when the index is made.
     ///
     /// Field 2: `dimensions`
     #[must_use]

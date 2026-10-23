@@ -1,6 +1,6 @@
 # 21. The Index on Lance
 
-Document 21 of the Scheda package. Version 0.8, 24 October 2026.
+Document 21 of the Scheda package. Version 0.10, 24 October 2026.
 
 Status: approved by the owner on 19 October 2026. Decisions marked
 *settled* were taken with him in discussion; the others were proposed
@@ -161,9 +161,20 @@ consumer does, one per index entry).
 
 **D10. The vector index: IVF_RQ, cosine, refined.** *Settled* on
 24 October 2026 (it was IVF_PQ until then). A dataset gets its vector
-index once it holds 10 000 rows (below that, an exact scan is fast enough
-and IVF has too little to train on): IVF with `round(sqrt(rows))`
-partitions and RaBitQ codes of 1 bit per dimension. Searches use
+index on the indexer's first round, whatever its size (until 24 October
+2026, from 10 000 rows): IVF with `round(sqrt(rows))` partitions, taken
+when the index is made, and RaBitQ codes of 1 bit per dimension. Lance
+builds it on any number of rows, one included, but not on a column of
+nulls (k-means has nothing to train on: the index waits for the first
+vector) and not on vectors whose length is not a multiple of 8 (RaBitQ
+packs a code by 8 dimensions: `EmbedderDescriptor.dimensions` refuses
+another length when the embedder is set, so it shows at once, not at the
+first index). Below about 3 000 rows the
+index is a few milliseconds slower than the exact scan (the refine alone
+reads 500 full vectors a query); from 5 000 rows it is 2.4 times faster,
+2.6 at 10 000. The size bound went anyway: the owner's tables pass it at
+once, and with none every table, and every test, runs the one search
+path. Searches use
 `refine_factor` 10 (the candidates are ranked again with the full vectors
 read from disk) and leave `nprobes` unset: Lance 13 then visits every
 partition, so partitioning loses no neighbour. Measured on 100 000 real
@@ -182,7 +193,8 @@ After a round that wrote rows, the indexer, still under `index.lock`:
 compacts with `target_rows_per_fragment` 16 384 (Lance's default, about
 one million rows, rewrites the largest fragment on every compaction: the
 spike saw 10 GB rewritten each time); brings the indices over the new
-rows when more than 10 000 are unindexed or every 50 rounds; merges the
+rows when more than 5 000 are unindexed (from about that many their
+exact scan costs more than the index) or every 50 rounds; merges the
 vector index deltas when there are more than 4
 (`OptimizeOptions::num_indices_to_merge`); and prunes a version an hour
 after it was replaced, never with `delete_unverified`. Lance prunes by a
@@ -469,7 +481,8 @@ D3, D15.
 
 ### L6. Search on Lance
 
-- [x] The vector leg (IVF_RQ with refine, or an exact scan below 10 000
+- [x] The vector leg (IVF_RQ with refine, and an exact scan of the rows
+      no index covers yet; until 24 October 2026 an exact scan below 10 000
       rows), the lexical leg (BM25), RRF fusion with the request's
       weights, the prefilter (`filter`), the Reranker port, `like`.
 - [x] The vector-leg reason decided from the Projector's columns, not

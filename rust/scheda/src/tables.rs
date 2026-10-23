@@ -1583,13 +1583,13 @@ mod tests {
         let count = Arc::clone(embedded);
         let embedder = FixedEmbedder::new(
             model,
-            4,
+            8,
             NonZeroUsize::new(8).unwrap(),
             move |texts: Vec<String>| {
                 count.fetch_add(texts.len(), Ordering::SeqCst);
                 Ok(texts
                     .iter()
-                    .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                    .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0])
                     .collect())
             },
         );
@@ -2025,7 +2025,7 @@ mod tests {
             let embedded = Arc::clone(&embedded);
             FixedEmbedder::new(
                 "model-a",
-                4,
+                8,
                 NonZeroUsize::MIN,
                 move |texts: Vec<String>| {
                     let mut done = embedded.lock().unwrap();
@@ -2039,7 +2039,7 @@ mod tests {
                     }
                     Ok(texts
                         .iter()
-                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0])
                         .collect())
                 },
             )
@@ -2313,7 +2313,7 @@ mod tests {
             let calls = Arc::clone(&calls);
             FixedEmbedder::new(
                 "model-a",
-                4,
+                8,
                 NonZeroUsize::new(8).unwrap(),
                 move |texts: Vec<String>| {
                     calls.fetch_add(1, Ordering::SeqCst);
@@ -2322,7 +2322,7 @@ mod tests {
                     }
                     Ok(texts
                         .iter()
-                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0])
                         .collect())
                 },
             )
@@ -2645,7 +2645,7 @@ mod tests {
             let broken = Arc::clone(&broken);
             FixedEmbedder::new(
                 "model-a",
-                4,
+                8,
                 NonZeroUsize::MIN,
                 move |texts: Vec<String>| {
                     if broken.load(Ordering::SeqCst) {
@@ -2655,7 +2655,7 @@ mod tests {
                     }
                     Ok(texts
                         .iter()
-                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0])
                         .collect())
                 },
             )
@@ -2874,12 +2874,15 @@ mod tests {
             let asked = Arc::clone(&asked);
             FixedEmbedder::new(
                 "model-a",
-                4,
+                8,
                 NonZeroUsize::MIN,
                 move |texts: Vec<String>| {
                     asked.fetch_add(1, Ordering::SeqCst);
                     std::thread::sleep(PORTION);
-                    Ok(texts.iter().map(|_| vec![1.0, 1.0, 2.0, 3.0]).collect())
+                    Ok(texts
+                        .iter()
+                        .map(|_| vec![1.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0])
+                        .collect())
                 },
             )
         };
@@ -2978,7 +2981,7 @@ mod tests {
         let embedded = Arc::clone(embedded);
         let embedder = FixedEmbedder::new(
             "model-a",
-            4,
+            8,
             NonZeroUsize::MIN,
             move |texts: Vec<String>| {
                 if texts.iter().any(|text| text.contains("bad")) {
@@ -2990,7 +2993,7 @@ mod tests {
                 }
                 Ok(texts
                     .iter()
-                    .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                    .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0])
                     .collect())
             },
         );

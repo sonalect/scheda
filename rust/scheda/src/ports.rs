@@ -1405,12 +1405,12 @@ mod tests {
 
     use super::*;
 
-    const DIMS: usize = 3;
+    const DIMS: usize = 8;
 
     /// The vector every test embedder gives for `text`.
     fn vector_for(text: &str) -> Vec<f32> {
         let first = f32::from(text.bytes().next().unwrap_or(0));
-        vec![text.len() as f32, first, 7.0]
+        vec![text.len() as f32, first, 7.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     }
 
     fn texts(n: usize) -> Vec<String> {
@@ -1626,7 +1626,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_descriptor_that_breaks_its_rules_fails_the_install_after_one_describe() {
-        for (model_id, dimensions) in [("model-a", 0), ("", 3)] {
+        for (model_id, dimensions) in [("model-a", 0), ("model-a", 12), ("", 8)] {
             let script = Script {
                 model_id: model_id.to_owned(),
                 dimensions,
@@ -1916,7 +1916,8 @@ mod tests {
         let portion = NonZeroUsize::new(2).unwrap();
 
         let blocking_log = Arc::new(Mutex::new(Vec::new()));
-        let adapter = FixedEmbedder::new("m", 3, portion, embed(Arc::clone(&blocking_log)));
+        let adapter =
+            FixedEmbedder::new("m", DIMS as u32, portion, embed(Arc::clone(&blocking_log)));
         let blocking: Vec<Result<Vector, Error>> =
             EmbedderSync::embed(&adapter, Box::new(items().into_iter()))
                 .unwrap()
@@ -1924,7 +1925,7 @@ mod tests {
 
         let async_log = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&async_log);
-        let adapter = FixedEmbedderAsync::new("m", 3, portion, move |texts| {
+        let adapter = FixedEmbedderAsync::new("m", DIMS as u32, portion, move |texts| {
             std::future::ready(embed(Arc::clone(&log))(texts))
         });
         let reply = EmbedderAsync::embed(&adapter, IterStream::new(items().into_iter()))
@@ -2412,7 +2413,7 @@ mod tests {
             fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
                 Ok(EmbedderDescriptor::default()
                     .with_model_id("boom")
-                    .with_dimensions(3))
+                    .with_dimensions(8))
             }
 
             fn embed(
@@ -2449,9 +2450,9 @@ mod thin_tests {
     async fn a_build_without_the_index_takes_no_port_and_removing_one_is_nothing() {
         let embedder = FixedEmbedder::new(
             "m",
-            2,
+            8,
             NonZeroUsize::new(1).unwrap(),
-            |texts: Vec<String>| Ok(texts.iter().map(|_| vec![0.0, 0.0]).collect()),
+            |texts: Vec<String>| Ok(texts.iter().map(|_| vec![0.0; 8]).collect()),
         );
         let error = Installed::new(Ports {
             embedder: Some(EmbedderRef::from_sync(embedder)),

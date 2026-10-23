@@ -1583,10 +1583,10 @@ fn port_flags_that_do_not_fit_together_are_invalid_argument() {
             "--embedder-openai-url",
             "http://127.0.0.1:1/v1",
             "--embedder-dimensions",
-            "4",
+            "8",
         ],
         vec!["--embedder-model", "m"],
-        vec!["--embedder-dimensions", "4"],
+        vec!["--embedder-dimensions", "8"],
         vec![key, "TC_KEY"],
         vec![
             "--embedder-openai-url",
@@ -1594,7 +1594,7 @@ fn port_flags_that_do_not_fit_together_are_invalid_argument() {
             "--embedder-model",
             "m",
             "--embedder-dimensions",
-            "4",
+            "8",
         ],
         vec![
             "--embedder-openai-url",
@@ -1602,7 +1602,7 @@ fn port_flags_that_do_not_fit_together_are_invalid_argument() {
             "--embedder-model",
             "m",
             "--embedder-dimensions",
-            "4",
+            "8",
             key,
             "TC_UNSET_KEY",
         ],
@@ -1614,7 +1614,7 @@ fn port_flags_that_do_not_fit_together_are_invalid_argument() {
             "--embedder-model",
             "m",
             "--embedder-dimensions",
-            "4",
+            "8",
         ],
         vec!["--model2vec-embedder", &model, "--embedder-model", "m"],
         vec!["--model2vec-embedder", &model],
@@ -1671,7 +1671,7 @@ fn valid_port_flags_reach_the_library_which_accepts_them() {
             "--embedder-model",
             "m",
             "--embedder-dimensions",
-            "4",
+            "8",
         ],
         vec!["--reranker-cohere-url", url, "--reranker-model", "m"],
     ] {
@@ -1779,11 +1779,11 @@ fn src_does_not_name_fixture_collections() {
 const HTTP_MODEL: &str = "tc-stub-embedder";
 const RERANK_MODEL: &str = "tc-stub-reranker";
 
-fn embed_vector(text: &str) -> [f32; 4] {
+fn embed_vector(text: &str) -> [f32; 8] {
     if text.contains("car") || text.contains("automobile") {
-        [1.0, 0.0, 0.0, 0.0]
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     } else {
-        [0.0, 1.0, 0.0, 0.0]
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     }
 }
 
@@ -1960,7 +1960,7 @@ fn twin_embedder(base: &str) -> EmbedderRef {
     let url = format!("{}/embeddings", base.trim_end_matches('/'));
     EmbedderRef::from_sync(FixedEmbedder::new(
         HTTP_MODEL,
-        4,
+        8,
         NonZeroUsize::new(32).unwrap(),
         move |texts: Vec<String>| {
             let value = post_json(&url, &json!({"model": HTTP_MODEL, "input": texts}))?;
@@ -2013,7 +2013,7 @@ fn the_http_ports_write_vectors_and_search_like_the_library_with_the_same_ports(
         "--embedder-model",
         HTTP_MODEL,
         "--embedder-dimensions",
-        "4",
+        "8",
     ];
     let rerank = [
         "--reranker-cohere-url",

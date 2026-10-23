@@ -28,10 +28,9 @@
 //! has a vector: `id` and `file` (as the rows'), `position` (the place of
 //! the text in the list, from 0), `digest`, and `vector`. A text without a
 //! vector (blank, or refused by the embedder) has no row there. The
-//! dataset is indexed as the rows are, a B-tree on `id` and, from
-//! [`VECTOR_INDEX_ROWS`] texts on, an IVF_RQ index of its own, so the
-//! vector leg looks up the nearest texts the way it looks up the nearest
-//! rows of a `text` column.
+//! dataset is indexed as the rows are, a B-tree on `id` and an IVF_RQ
+//! index of its own, so the vector leg looks up the nearest texts the way
+//! it looks up the nearest rows of a `text` column.
 //!
 //! **Files.** One row per file the rows came from: `path` and `blob`, the
 //! git blob id of the file as indexed. A round that cannot know what
@@ -108,12 +107,11 @@ const SMALL_FRAGMENTS: usize = 8;
 /// the larger share, again and again, for a smaller one reclaimed.
 const MATERIALIZE_DELETIONS: f32 = 0.5;
 
-/// Below this many rows a table gets no vector index: an exact scan is
-/// fast enough, and IVF has too little to train on.
-pub(crate) const VECTOR_INDEX_ROWS: usize = 10_000;
-
 /// Rows not yet in an index that make a round bring the indices over them.
-const UNINDEXED_ROWS: usize = 10_000;
+/// A search scans those rows exactly; from about this many the scan costs
+/// more than the vector index does, while bringing the index over them
+/// rewrites it.
+const UNINDEXED_ROWS: usize = 5_000;
 
 /// The rounds after which the indices are brought over new rows anyway.
 const ROUNDS_PER_INDEX_UPDATE: u64 = 50;
@@ -1174,9 +1172,9 @@ impl Table {
     /// texts datasets included: compaction of the small fragments once
     /// [`SMALL_FRAGMENTS`] of them have piled up (or one has most of its
     /// rows deleted); the indices on `id`, the `scalar_index` and `fts`
-    /// columns, `path` of the files, and, from [`VECTOR_INDEX_ROWS`] rows
-    /// (texts) on, the vectors; the indices brought over new rows when many are unindexed
-    /// or every [`ROUNDS_PER_INDEX_UPDATE`] rounds; and the versions before
+    /// columns, `path` of the files, and the vectors; the indices brought
+    /// over new rows once more than [`UNINDEXED_ROWS`] are unindexed or
+    /// every [`ROUNDS_PER_INDEX_UPDATE`] rounds; and the versions before
     /// `keep` pruned: those no reader may still open. `keep` is `None` for
     /// a table no `commit` named yet: nothing is pruned. `round` counts the
     /// rounds of the generation.
@@ -1281,8 +1279,9 @@ async fn append(dataset: &Arc<Dataset>, batch: RecordBatch) -> Result<Arc<Datase
 }
 
 /// Makes the indices `dataset` lacks: each of `scalar` (a column and the
-/// kind of its index), and, once it holds [`VECTOR_INDEX_ROWS`] rows and
-/// vectors of `dimensions` values, an IVF_RQ index on each of `vectors`.
+/// kind of its index), and, when it holds vectors of `dimensions` values,
+/// an IVF_RQ index on each of `vectors` that holds one, whatever the
+/// number of rows.
 /// When it made none, it brings the indices over the rows they do not
 /// cover once more than [`UNINDEXED_ROWS`] are left out, or every
 /// [`ROUNDS_PER_INDEX_UPDATE`] rounds.
@@ -1328,10 +1327,10 @@ async fn keep_indexed(
         .context("make an index of a column")?;
         created = true;
     }
-    if total >= VECTOR_INDEX_ROWS && dimensions.is_some() {
+    if dimensions.is_some() {
         for target in vectors {
             let name = index_name(target, IndexType::Vector);
-            if existing.contains(&name) {
+            if existing.contains(&name) || !holds_vectors(dataset, target).await? {
                 continue;
             }
             let params = VectorIndexParams::ivf_rq(
@@ -1376,6 +1375,22 @@ fn index_name(column: &str, kind: IndexType) -> String {
         _ => "ivf_rq",
     };
     format!("{column}_{tag}")
+}
+
+/// Whether `column` of `dataset` holds a vector in any row: an IVF index
+/// has nothing to train on in a column of nulls (no row's text had one
+/// yet). The read stops at the first vector; it reads the column through
+/// only while it holds none, and only until the index is made.
+async fn holds_vectors(dataset: &Dataset, column: &str) -> Result<bool, Error> {
+    let mut scanner = dataset.scan();
+    scanner
+        .project(&[column])
+        .map_err(lance_fault)?
+        .filter_expr(col(column).is_not_null())
+        .limit(Some(1), None)
+        .map_err(lance_fault)?;
+    let first = scanner.try_into_batch().await.map_err(lance_fault)?;
+    Ok(first.num_rows() > 0)
 }
 
 /// IVF partitions for `rows` rows: about the square root, at least one.
@@ -1513,6 +1528,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_paths_of_a_table_with_every_index_and_long_columns_stay_short() {
         const DIMENSIONS: usize = 16;
+        const ROWS: usize = 300;
         let long = |name: &str| format!("{name}{}", "c".repeat(200 - name.len()));
         let (kind, title, topic) = (long("kind"), long("title"), long("topic"));
         let scratch = Scratch::new("short-paths");
@@ -1529,7 +1545,7 @@ mod tests {
         let mut table = Table::open(&generation, "t0", &numbered(&shape), shape, None)
             .await
             .unwrap();
-        let rows: Vec<Row> = (0..VECTOR_INDEX_ROWS)
+        let rows: Vec<Row> = (0..ROWS)
             .map(|n| {
                 let id = format!("r{n:05}");
                 Row {
@@ -1595,6 +1611,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn the_indices_are_made_and_the_scans_use_them() {
         const DIMENSIONS: usize = 16;
+        const ROWS: usize = 300;
         let scratch = Scratch::new("indices");
         let shape = Shape {
             columns: vec![
@@ -1608,7 +1625,7 @@ mod tests {
         let mut table = Table::open(&scratch.0, "t0", &numbered(&shape), shape, None)
             .await
             .unwrap();
-        let rows: Vec<Row> = (0..VECTOR_INDEX_ROWS)
+        let rows: Vec<Row> = (0..ROWS)
             .map(|n| {
                 let id = format!("r{n:05}");
                 Row {
@@ -1663,6 +1680,128 @@ mod tests {
             .refine(10);
         let plan = scanner.explain_plan(false).await.unwrap();
         assert!(plan.contains("ANNIvfPartition"), "{plan}");
+    }
+
+    /// A table with vectors gets its vector index on its first round,
+    /// however few its rows. Rows written later stay out of the indices
+    /// while no more than [`UNINDEXED_ROWS`] wait (in rounds that are not
+    /// one of every [`ROUNDS_PER_INDEX_UPDATE`]); one more, and the round
+    /// brings the indices over all of them.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn new_rows_join_the_indices_once_more_than_the_bound_wait() {
+        const DIMENSIONS: usize = 16;
+        let scratch = Scratch::new("unindexed");
+        let shape = Shape {
+            columns: vec![column("topic", false, false, true)],
+            vectors: vec![String::from("topic")],
+            dimensions: Some(DIMENSIONS as u32),
+        };
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&shape), shape, None)
+            .await
+            .unwrap();
+        let rows = |numbers: std::ops::Range<usize>| -> Vec<Row> {
+            numbers
+                .map(|n| {
+                    let id = format!("r{n:05}");
+                    Row {
+                        file: format!("notes/{id}"),
+                        order: id.clone(),
+                        id,
+                        values: BTreeMap::new(),
+                        embeddings: BTreeMap::from([(
+                            String::from("topic"),
+                            vec![Embedding {
+                                position: 0,
+                                vector: vector_of(n, DIMENSIONS),
+                                digest: format!("d{n}"),
+                            }],
+                        )]),
+                    }
+                })
+                .collect()
+        };
+
+        table.upsert(&rows(0..3)).await.unwrap();
+        table.maintain(1, None).await.unwrap();
+        let vector_indices = Dataset::clone(&table.rows)
+            .load_indices()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|index| index.name.ends_with("_ivf_rq"))
+            .count();
+        assert_eq!(vector_indices, 1, "three rows get the vector index");
+        let waiting = unindexed_rows(&Dataset::clone(&table.rows)).await.unwrap();
+        assert_eq!(waiting, 0);
+
+        table.upsert(&rows(3..3 + UNINDEXED_ROWS)).await.unwrap();
+        table.maintain(2, None).await.unwrap();
+        let waiting = unindexed_rows(&Dataset::clone(&table.rows)).await.unwrap();
+        assert_eq!(waiting, UNINDEXED_ROWS, "as many as the bound still wait");
+
+        table
+            .upsert(&rows(3 + UNINDEXED_ROWS..4 + UNINDEXED_ROWS))
+            .await
+            .unwrap();
+        table.maintain(3, None).await.unwrap();
+        let waiting = unindexed_rows(&Dataset::clone(&table.rows)).await.unwrap();
+        assert_eq!(waiting, 0, "one more brings the indices over them all");
+    }
+
+    /// A `vector` column with no vector in any row (no row's text had one)
+    /// gets no vector index, and the round does not fail; the round after
+    /// the first vector makes the index.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_column_without_a_vector_gets_its_index_with_the_first_one() {
+        const DIMENSIONS: usize = 16;
+        let scratch = Scratch::new("no-vectors");
+        let shape = Shape {
+            columns: vec![column("topic", false, false, true)],
+            vectors: vec![String::from("topic")],
+            dimensions: Some(DIMENSIONS as u32),
+        };
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&shape), shape, None)
+            .await
+            .unwrap();
+        let row = |n: usize, vector: bool| {
+            let id = format!("r{n:05}");
+            let embeddings = if vector {
+                BTreeMap::from([(
+                    String::from("topic"),
+                    vec![Embedding {
+                        position: 0,
+                        vector: vector_of(n, DIMENSIONS),
+                        digest: format!("d{n}"),
+                    }],
+                )])
+            } else {
+                BTreeMap::new()
+            };
+            Row {
+                file: format!("notes/{id}"),
+                order: id.clone(),
+                id,
+                values: BTreeMap::new(),
+                embeddings,
+            }
+        };
+        let vector_indices = |rows: Dataset| async move {
+            rows.load_indices()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|index| index.name.ends_with("_ivf_rq"))
+                .count()
+        };
+
+        let rows: Vec<Row> = (0..3).map(|n| row(n, false)).collect();
+        table.upsert(&rows).await.unwrap();
+        table.maintain(1, None).await.unwrap();
+        assert_eq!(vector_indices(Dataset::clone(&table.rows)).await, 0);
+
+        table.upsert(&[row(3, true)]).await.unwrap();
+        table.maintain(2, None).await.unwrap();
+        assert_eq!(vector_indices(Dataset::clone(&table.rows)).await, 1);
     }
 
     /// Every kind of column with `scalar_index` gets an index that a filter

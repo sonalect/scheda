@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.87, 20 October 2026.
+Document 14 of the Scheda package. Version 0.88, 24 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -74,7 +74,7 @@ All of them go before the subcommand or after it.
 | `--encryption-identity-file PATH` | An age identity file (`AGE-SECRET-KEY-…`; comments and a trailing newline as `age-keygen` writes) as `OpenOptions.encryption.identity`. Unreadable or malformed → `INVALID_ARGUMENT`. Not with `--encryption-passphrase-env-var`. |
 | `--embedder-openai-url URL` | OpenAI-compatible API root (`http`/`https`). The CLI `POST`s `{URL}embeddings`. With `--embedder-model` and `--embedder-dimensions`, or none of the three; a partial set is `INVALID_ARGUMENT`. Implements the `Embedder` port. Not with `--model2vec-embedder`. |
 | `--embedder-model NAME` | The JSON `model` of the embeddings body, and the model id of the embedder. |
-| `--embedder-dimensions N` | A positive integer: the length of the vectors (no probe). A reply of another length fails the call. |
+| `--embedder-dimensions N` | A positive multiple of 8: the length of the vectors (no probe); another number is `INVALID_ARGUMENT` when the Vault opens. A reply of another length fails the call. |
 | `--embedder-api-key-env-var NAME` | Read `NAME` and send `Authorization: Bearer`. Only with the HTTP embedder flags. Unset: no auth. Missing or empty variable → `INVALID_ARGUMENT`. |
 | `--model2vec-embedder DIR` | A folder with a Model2Vec model (`config.json`, `tokenizer.json`, `model.safetensors`). The CLI loads it (`model2vec-rs`, no Hub download) as the `Embedder`. A missing required file, or a path that is not a folder → `INVALID_ARGUMENT`. Extra files are allowed. Not with the HTTP embedder flags. |
 | `--reranker-cohere-url URL` | Cohere or Jina rerank API root (`http`/`https`). The CLI `POST`s `{URL}rerank`. With `--reranker-model`, or neither. Implements the `Reranker` port, used by a search with `rerankLimit`. |

@@ -771,7 +771,9 @@ pub struct EmbedderDescriptor {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub model_id: ::core::option::Option<::buffa::alloc::string::String>,
-    /// The length of each vector. At least 1.
+    /// The length of each vector: at least 1, and a multiple of 8. The vector
+    /// index (IVF_RQ) packs the code of a vector by 8 dimensions, so another
+    /// length is refused when the embedder is set, not when the index is made.
     ///
     /// Field 2: `dimensions`
     #[serde(

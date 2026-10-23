@@ -16,8 +16,8 @@
 //! leg, and only the column it names), and asks each `vector` column for
 //! the nearest vectors by cosine distance: through its IVF_RQ index, the
 //! candidates ranked again with the full vectors, and by an exact scan of
-//! the rows no index covers yet (a table too small for an index, and the
-//! rows written since). An `exact` search scans every vector the filter
+//! the rows no index covers yet (those written since the indexer last
+//! brought the indices over new rows). An `exact` search scans every vector the filter
 //! admits instead, and reads every row at the distance of its last hit, so
 //! the hits at one distance are taken in `id` order, not in the order Lance
 //! stored them: the hits depend only on the rows and the request. A

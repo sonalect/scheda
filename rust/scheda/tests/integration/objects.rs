@@ -326,7 +326,7 @@ impl EmbedderAsync for Remote {
     async fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
         Ok(EmbedderDescriptor::default()
             .with_model_id("remote")
-            .with_dimensions(3))
+            .with_dimensions(8))
     }
 
     async fn embed<R>(

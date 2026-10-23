@@ -160,6 +160,7 @@ pub(crate) mod on_lance {
             .map(|topic| words.iter().filter(|word| topic.contains(word)).count() as f32)
             .collect();
         vector.push(0.05);
+        vector.extend([0.0; 4]);
         vector
     }
 
@@ -211,7 +212,7 @@ pub(crate) mod on_lance {
         fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
             Ok(EmbedderDescriptor::default()
                 .with_model_id(self.model)
-                .with_dimensions(4))
+                .with_dimensions(8))
         }
 
         fn embed(
@@ -815,7 +816,7 @@ pub(crate) mod on_lance {
             let seen = Arc::clone(&threads);
             request.embedder = EmbedderRef::from_async(FixedEmbedderAsync::new(
                 "topics@1",
-                4,
+                8,
                 NonZeroUsize::new(2).unwrap(),
                 move |texts: Vec<String>| {
                     let seen = Arc::clone(&seen);
@@ -916,7 +917,7 @@ pub(crate) mod on_lance {
             request.embedder = EmbedderRef::from_async(
                 FixedEmbedderAsync::new(
                     "topics@1",
-                    4,
+                    8,
                     NonZeroUsize::new(2).unwrap(),
                     move |portion: Vec<String>| {
                         texts.lock().unwrap().extend(portion.iter().cloned());
@@ -2274,7 +2275,7 @@ pub(crate) mod on_lance {
         fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
             Ok(EmbedderDescriptor::default()
                 .with_model_id("topics@1")
-                .with_dimensions(4))
+                .with_dimensions(8))
         }
 
         fn embed(

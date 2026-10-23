@@ -97,13 +97,36 @@ vector index: 7 446 vectors, below 10 000).
 - With `nprobes` unset, Lance 13 visits every partition (the analyzed
   plan: 27 of 27, 78 of 78, 109 of 109), so partitioning loses nothing and
   a query reads every code. A set `nprobes` costs recall at once (64 of
-  316: 0.98; 8: 0.85), for every quantizer alike. Lance caps the
-  partitions at about rows / 256.
+  316: 0.98; 8: 0.85), for every quantizer alike. For IVF_PQ Lance caps
+  the partitions at about rows / 256 (27 at 7 000 rows); IVF_RQ takes
+  `round(sqrt(rows))` at every size (1 at one row, 10 at 100, 100 at
+  10 000).
 - Appends cost no recall: Scheda's own path (the index made at 10 000 rows
   with 100 partitions, then 9 appends of 10 000 rows with `merge(4)`)
   gave IVF_PQ 0.9995 / 0.986 and IVF_RQ 1.000 / 1.000; one optimize of
   10 000 rows takes under a second. The partitions stay as made (Lance
   splits only for `num_indices_to_merge: None`), which did not hurt here.
+- The size bound (`VECTOR_INDEX_ROWS`, 10 000) went the same day, on the
+  owner's word: Lance builds IVF_RQ on any number of rows, one included.
+  First N rows of the corpus, 600 queries, Scheda's exact scan against
+  IVF_RQ with refine 10 (p50): 1 000 rows 3.4 against 16.7 ms, 2 000 6.8
+  against 18.2, 3 000 10.0 against 9.8, 5 000 18.7 against 7.7, 10 000
+  29.2 against 11.1, 20 000 52.4 against 13.1; recall 1.000 at every size.
+  The index loses a few milliseconds below about 3 000 rows; the owner's
+  tables pass that at once, and with no bound every test runs the one
+  search path. `UNINDEXED_ROWS` went from 10 000 to 5 000: the rows no
+  index covers are scanned exactly, and from about 5 000 that costs more
+  than the index. `store::tests::new_rows_join_the_indices_once_more_than_the_bound_wait`
+  checks the bound.
+- Lance builds IVF_RQ only for vectors whose length is a multiple of 8
+  (`lance-index` `bq/builder.rs`: "vector dimension must be divisible by
+  8 for IVF_RQ"), and not on a column of nulls (k-means has nothing to
+  train on). The owner's decision (24 October 2026): fail at once, not
+  fall back to a scan. `EmbedderDescriptor.dimensions` carries a
+  multiple-of-8 rule, so another length is `INVALID_ARGUMENT` when the
+  embedder is set; a column with no vector yet waits for the first one
+  (`store::holds_vectors`). Scheda's test embedders give 8 values (the 4
+  or 3 they gave, padded with zeros: the cosine is unchanged).
 - Not measured: 1 000 000 rows (100 000 decided it), a release build, the
   `Matrix` rotation, the reranker end to end (IVF_RQ's top 50 equals the
   exact top 50 on every query, so the reranker sees the same candidates).

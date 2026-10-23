@@ -22,10 +22,10 @@ use scheda::{Error, FixedEmbedder, FixedEmbedderAsync, FixedReranker, FixedReran
 
 use crate::common::{Scratch, all, both, open, opening, snapshot, vault};
 
-const DIMS: u32 = 3;
+const DIMS: u32 = 8;
 
 fn vector_for(text: &str) -> Vec<f32> {
-    vec![text.len() as f32, 1.0, 2.0]
+    vec![text.len() as f32, 1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 }
 
 fn texts(n: usize) -> Vec<String> {
@@ -172,11 +172,14 @@ fn an_embedder_whose_descriptor_breaks_its_rules_is_invalid_argument_and_writes_
         let (_scratch, path) = scratch_vault("bad-embedder");
         let describes = Arc::new(AtomicUsize::new(0));
         let before = snapshot(&path);
-        let mut broken = Counting::new(&describes);
-        broken.dimensions = 0;
-        let error = refused(opening_with(&path, broken)).await;
-        assert!(error.is(Code::InvalidArgument), "{error}");
-        assert_eq!(snapshot(&path), before, "a refused port writes nothing");
+        // No length, and a length the vector index cannot pack by 8.
+        for dimensions in [0, 12] {
+            let mut broken = Counting::new(&describes);
+            broken.dimensions = dimensions;
+            let error = refused(opening_with(&path, broken)).await;
+            assert!(error.is(Code::InvalidArgument), "{dimensions}: {error}");
+            assert_eq!(snapshot(&path), before, "a refused port writes nothing");
+        }
     });
 }
 

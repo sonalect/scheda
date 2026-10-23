@@ -208,6 +208,40 @@ impl ::protovalidate_buffa::Validate for EmbedderDescriptor {
                 }
             }
         }
+        if let ::core::option::Option::Some(__cel_inner) = self.dimensions.as_ref() {
+            let __cel_this = ((*__cel_inner) as u64);
+            if !(((((__cel_this)) % ((8u64 as u64))) == (0u64 as u64))) {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("dimensions")), field_type
+                                : Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "dimensions.multiple_of_8",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "must be a multiple of 8: the vector index packs its codes by 8 dimensions",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
         if let Some(index) = violations
             .iter()
             .position(|v| v.rule_id == "__cel_runtime_error__")
@@ -367,6 +401,40 @@ impl ::protovalidate_buffa::Validate for __buffa::view::EmbedderDescriptorView<'
                             for_key: false,
                         });
                 }
+            }
+        }
+        if let ::core::option::Option::Some(__cel_inner) = self.dimensions.as_ref() {
+            let __cel_this = ((*__cel_inner) as u64);
+            if !(((((__cel_this)) % ((8u64 as u64))) == (0u64 as u64))) {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("dimensions")), field_type
+                                : Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "dimensions.multiple_of_8",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "must be a multiple of 8: the vector index packs its codes by 8 dimensions",
+                        ),
+                        for_key: false,
+                    });
             }
         }
         if let Some(index) = violations

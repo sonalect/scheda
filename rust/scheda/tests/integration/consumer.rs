@@ -162,6 +162,7 @@ fn topic_vector(text: &str) -> Vec<f32> {
         .map(|topic| words.iter().filter(|word| topic.contains(word)).count() as f32)
         .collect();
     vector.push(0.05);
+    vector.extend([0.0; 4]);
     vector
 }
 
@@ -170,7 +171,7 @@ fn topic_vector(text: &str) -> Vec<f32> {
 fn embedder_with(pause: Duration) -> EmbedderRef {
     EmbedderRef::from_sync(FixedEmbedder::new(
         "topics@1",
-        4,
+        8,
         NonZeroUsize::new(8).unwrap(),
         move |texts: Vec<String>| {
             std::thread::sleep(pause);

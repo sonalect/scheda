@@ -24,12 +24,26 @@ API or on-disk format changes bump the minor.
   0.997 and 0.964), answers a query about 5 times faster, and builds about
   8 times faster; it takes about 1.7 times the disk (35 MB against 21 MB
   per 100 000 vectors) and about 12 % more memory in a searching process.
-  A table of 10 000 rows or more gets it, named `{column}_ivf_rq`, on the
-  indexer's next round. The Index `format` is unchanged, so an Index that
+  Every table with vectors now gets it, named `{column}_ivf_rq`, on the
+  indexer's next round, whatever its size; before, a table below 10 000
+  rows got none and was searched by an exact scan. Below about 3 000 rows
+  a search through the index is a few milliseconds slower than that scan;
+  from 5 000 rows it is 2.4 times faster, with the same hits. The indices
+  are brought over new rows once more than 5 000 wait, not 10 000: the
+  rows they do not cover are scanned exactly by every search. The Index
+  `format` is unchanged, so an Index that
   already holds an IVF_PQ index (`{column}_ivf_pq`) is not converted: it
   gets the IVF_RQ index beside the old one. To drop the old one, remove
   `{vault}/.scheda/index`; the Index is built again from `HEAD`, and its
   texts are embedded again.
+- An embedder's vectors must have a length that is a multiple of 8
+  (`EmbedderDescriptor.dimensions`): the vector index, IVF_RQ, packs the
+  code of a vector by 8 dimensions. An embedder of another length is now
+  `INVALID_ARGUMENT` when it is set, at `Open` or `SetEmbedder` ("must be
+  a multiple of 8: the vector index packs its codes by 8 dimensions"),
+  instead of breaking the Index when its first vector index is made.
+  Common models give such lengths (384, 768, 1024, 1536, 2560, 3072); a
+  model of 100 or 300 cannot be used.
 - A failure of the git library on the Vault's own repository is no longer
   `REPLICATION` unless it is one: a missing or damaged object, tree,
   reference, configuration, index, or repository is now `DATA_LOSS`, and
@@ -69,6 +83,11 @@ API or on-disk format changes bump the minor.
   its Lance files with the umask's modes: it narrows them to the owner
   however it ends, so `Check` stays clean. The files of a killed round are
   narrowed by the next round.
+- A `vector` column whose rows hold no vector yet (no row's text had one)
+  no longer fails the indexer's round with `INDEX_BROKEN` when its table
+  is large enough for a vector index: the index waits for the first
+  vector. Before, a table of 10 000 rows or more with such a column could
+  not be indexed.
 - `filelock`, which the Python sidecar lock (`uv.lock`) takes in through
   vLLM, is 4.2.4 instead of 4.2.0: the older one has three advisories
   (GHSA-v4x8-3wr5-3wq8, GHSA-2g95-wg33-c5x2, GHSA-crv4-6mhj-j5jh), fixed in
