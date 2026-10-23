@@ -17,6 +17,19 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- The vector index is IVF_RQ (RaBitQ codes, 1 bit per dimension, cosine),
+  not IVF_PQ. On 100 000 real 2 560-dim embeddings, with the search
+  ranking the candidates again with the full vectors as before, it finds
+  the exact nearest neighbours (recall 1.000 at `k` 10 and 50, against
+  0.997 and 0.964), answers a query about 5 times faster, and builds about
+  8 times faster; it takes about 1.7 times the disk (35 MB against 21 MB
+  per 100 000 vectors) and about 12 % more memory in a searching process.
+  A table of 10 000 rows or more gets it, named `{column}_ivf_rq`, on the
+  indexer's next round. The Index `format` is unchanged, so an Index that
+  already holds an IVF_PQ index (`{column}_ivf_pq`) is not converted: it
+  gets the IVF_RQ index beside the old one. To drop the old one, remove
+  `{vault}/.scheda/index`; the Index is built again from `HEAD`, and its
+  texts are embedded again.
 - A failure of the git library on the Vault's own repository is no longer
   `REPLICATION` unless it is one: a missing or damaged object, tree,
   reference, configuration, index, or repository is now `DATA_LOSS`, and

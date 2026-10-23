@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.58, 20 October 2026.
+Document 10 of the Scheda package. Version 0.59, 24 October 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -92,7 +92,7 @@ Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (
 5. Token, synonym, and hybrid fixtures put expected ids in `k` with per-leg scores (QRY-3, IDX-6, IDX-7).
 6. Hybrid search on the OPS-1 fixture finishes in tens of milliseconds (OPS-2).
 
-**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is BM25 over the full-text index of Lance; ANN is Lance's IVF_PQ index on cosine distance, with an exact scan below its size and for the rows no index covers yet; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt Index → `INDEX_BROKEN`; `Collection.Get` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
+**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is BM25 over the full-text index of Lance; ANN is Lance's IVF_RQ index on cosine distance, with an exact scan below its size and for the rows no index covers yet; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt Index → `INDEX_BROKEN`; `Collection.Get` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
 
 ---
 

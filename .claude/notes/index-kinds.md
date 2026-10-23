@@ -3,8 +3,9 @@
 Review of 21 October 2026, for the owner; no code changed. Scheda builds
 three kinds of Lance index: a B-tree (on `id`, on `path` of the files
 table, on each `scalar_index` column), an inverted index (BM25, no
-positions, no stemming) on each `fts` column, and IVF_PQ (cosine, refine
-10) on each `vector` column from 10 000 rows.
+positions, no stemming) on each `fts` column, and a vector index (cosine,
+refine 10) on each `vector` column from 10 000 rows: IVF_RQ with 1 bit per
+dimension since 24 October 2026, IVF_PQ before (last section).
 
 ## The gap: `scalar_index` on a `text list` builds nothing
 
@@ -54,43 +55,63 @@ proposed:
 
 ## The rest of the set
 
-- IVF_PQ was chosen by a measurement (`21` D10: recall 1.00 at 0.9 GB per
-  process, against IVF_SQ 0.99 at 2.4 GB and IVF_HNSW_SQ 0.95), on
-  synthetic vectors. IVF_RQ (RaBitQ, in Lance 13) was not measured:
-  measure it on real embeddings before a fork cuts the vector variants
-  (`lance-binary-size.md`).
+- The vector index kind was chosen by a measurement on real embeddings
+  (last section): IVF_RQ, 1 bit. IVF_PQ had been chosen on the spike's
+  synthetic vectors (`21` D10: recall 1.00 at 0.9 GB per process, against
+  IVF_SQ 0.99 at 2.4 GB and IVF_HNSW_SQ 0.95).
 - The inverted index is the only ranked lexical index in Lance; NGram and
   the FM-index find substrings without a rank.
 - LabelList is built on Bitmap. A fork that trims index kinds keeps BTree,
-  Inverted, LabelList with Bitmap, and IVF_PQ, plus whatever the RQ
-  measurement picks.
+  Inverted, LabelList with Bitmap, and IVF with RQ. IVF_PQ only while an
+  Index made before 24 October 2026 may still hold one (it is not
+  converted; see CHANGELOG).
 
-## Deferred: IVF_PQ against IVF_RQ
+## IVF_PQ against IVF_RQ: measured, IVF_RQ taken (24 October 2026)
 
-The owner's task of 21 October 2026, set for after 0.26; start only on his
-word. Not a format change: the index is rebuilt from the stored vectors.
+The owner's task of 21 October 2026, run on 23-24 October 2026 in
+`/home/amsokol/Coding/vector-index-bench` (its own git repository, outside
+this one; `REPORT.md` there has every table, `results/` the raw CSV). The
+owner took IVF_RQ with 1 bit on 24 October 2026; `store.rs` builds it
+(`VECTOR_INDEX_BITS`), no migration (the only Vault, Knowqore's, had no
+vector index: 7 446 vectors, below 10 000).
 
-- Measure the vector index kind, IVF_PQ (today) against IVF_RQ, on real
-  Qwen3 embeddings (2560 dimensions), at 100 000 vectors. 1 000 000 only
-  if the smaller run gives no clear answer (the owner, 23 October 2026:
-  a fast decision, not a week of measuring). In a folder of its own
-  outside this repository; the prompt for that session was written on
-  23 October 2026.
-- Criteria, in order: recall of the top k against exact search as the
-  reference (first: a reranker cannot bring back what the vector leg did
-  not find); peak memory of building and of searching; time of building
-  and of searching; size of the index.
-- Refine and the number of partitions go into the same measurement.
-- HNSW is out: a graph held in memory breaks Knowqore's rule of bounded
-  memory.
-- SQ is out too (the owner, 21 October 2026): it holds a byte per dimension
-  of every vector in memory per searching process (2.4 GB at 1M × 2560 in
-  the spike, against 0.9 GB for IVF_PQ with refine), with no recall gain
-  over IVF_PQ with refine. The Lance fork cuts both (its `SCHEDA-PATCH.md`,
-  Part 4); the measurement above is IVF_PQ against IVF_RQ only.
+- Data: 100 000 real passages embedded by Qwen3-Embedding-4B the way
+  Knowqore stores a text (16 223 commit messages, 33 280 Markdown
+  paragraphs, 50 497 Rust doc comments); queries: 600 of the 1 302 lesson
+  statements of Knowqore's Vault, with its retrieval-excerpts instruction.
+  Exact top 50 by brute force, equal to Lance `use_index(false)` on every
+  query. Lance 13.0.0, Scheda's dev profile (latencies are relative).
+- Scheda's settings (316 partitions, `nprobes` unset, refine 10):
+
+  | | IVF_PQ 160 | IVF_RQ 1 bit | IVF_RQ 2 | IVF_RQ 4 | IVF_PQ 320 |
+  | - | - | - | - | - | - |
+  | recall@10 | 0.997 | 1.000 | 1.000 | 1.000 | 1.000 |
+  | recall@50 | 0.964 | 1.000 | 1.000 | 1.000 | 0.998 |
+  | query p50 | 65 ms | 13 ms | 13 ms | 19 ms | 102 ms |
+  | build | 58 s | 7.5 s | 9 s | 14 s | 115 s |
+  | index on disk | 21 MB | 35 MB | 66 MB | 127 MB | 36 MB |
+  | search process peak RSS | 741 MB | 827 MB | 981 MB | 1 266 MB | 867 MB |
+
+- Without refine: IVF_PQ 160 0.668, IVF_RQ 1 bit 0.893 at `k` 10; refine 5
+  already gives IVF_RQ 1.000.
+- With `nprobes` unset, Lance 13 visits every partition (the analyzed
+  plan: 27 of 27, 78 of 78, 109 of 109), so partitioning loses nothing and
+  a query reads every code. A set `nprobes` costs recall at once (64 of
+  316: 0.98; 8: 0.85), for every quantizer alike. Lance caps the
+  partitions at about rows / 256.
+- Appends cost no recall: Scheda's own path (the index made at 10 000 rows
+  with 100 partitions, then 9 appends of 10 000 rows with `merge(4)`)
+  gave IVF_PQ 0.9995 / 0.986 and IVF_RQ 1.000 / 1.000; one optimize of
+  10 000 rows takes under a second. The partitions stay as made (Lance
+  splits only for `num_indices_to_merge: None`), which did not hurt here.
+- Not measured: 1 000 000 rows (100 000 decided it), a release build, the
+  `Matrix` rotation, the reranker end to end (IVF_RQ's top 50 equals the
+  exact top 50 on every query, so the reranker sees the same candidates).
 
 **Why:** the owner asked whether the index kinds are the best ones
-(21 October 2026) and will come back to it.
+(21 October 2026); the earlier choice rested on synthetic vectors.
 
-**How to apply:** a fork that trims index kinds keeps LabelList (with
-Bitmap, which it is built on).
+**How to apply:** keep `nprobes` unset unless a measurement at the
+consumer's scale says the full scan is too slow; a set `nprobes` trades
+recall at once. A fork that trims index kinds keeps LabelList (with
+Bitmap, which it is built on) and IVF with RQ.

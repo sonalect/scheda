@@ -14,7 +14,7 @@ Project state, deferred work, and measurements that outlive one session
 | [generation-4-known-issues.md](generation-4-known-issues.md) | The owner's rule for the push to the demo (functionality first; load-only races and what the demo does not exercise are deferred), the deferred work and the known issues of generation 4, 21 October 2026 |
 | [folder-layout.md](folder-layout.md) | The Vault of generation 4 (`docs/24`): every measurement behind it (writes, git's index, syncs, packs, merges, reads, paths) and the owner's decisions one by one, 21 October 2026 |
 | [lance-binary-size.md](lance-binary-size.md) | Why a consumer's binary is 121 MB (about 80% Lance, DataFusion, sqlparser, Arrow), the measured fork prototype (−21%), the proposed `sonalect/lance` fork (owner's decision open), why `lance-index` alone is no way, 21 October 2026 |
-| [index-kinds.md](index-kinds.md) | The Lance index kinds Scheda builds; the `text list` gap, fixed with LabelList (23 October 2026); the IVF_PQ against IVF_RQ measurement on real embeddings, deferred to after 0.26, 21 October 2026 |
+| [index-kinds.md](index-kinds.md) | The Lance index kinds Scheda builds; the `text list` gap, fixed with LabelList (23 October 2026); the IVF_PQ against IVF_RQ measurement on real embeddings: IVF_RQ 1 bit taken, 24 October 2026 |
 
 ## Pointers
 

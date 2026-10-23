@@ -1,6 +1,6 @@
 # 21. The Index on Lance
 
-Document 21 of the Scheda package. Version 0.7, 23 October 2026.
+Document 21 of the Scheda package. Version 0.8, 24 October 2026.
 
 Status: approved by the owner on 19 October 2026. Decisions marked
 *settled* were taken with him in discussion; the others were proposed
@@ -159,15 +159,23 @@ describes its columns. *Recommendation:* accept; a consumer that needs
 several vectors per Document writes several Documents (as the anchor
 consumer does, one per index entry).
 
-**D10. The vector index: IVF_PQ, cosine, refined.** *Proposed.* A
-dataset gets its vector index once it holds 10 000 rows (below that, an
-exact scan is fast enough and IVF has too little to train on). Searches
-use `refine_factor` 10: the PQ candidates are re-ranked with the full
-vectors read from disk. In the spike that gave recall 1.00 at `k` 300 on
-1M rows in 58 ms (fresh) to 101 ms (four index deltas), with 0.9 GB of
-memory per searching process. IVF_SQ gave 0.99 at about the same speed
-with 2.4 GB per process; IVF_HNSW_SQ 0.95. *Recommendation:* IVF_PQ with
-refine 10; the values are constants in code, not options.
+**D10. The vector index: IVF_RQ, cosine, refined.** *Settled* on
+24 October 2026 (it was IVF_PQ until then). A dataset gets its vector
+index once it holds 10 000 rows (below that, an exact scan is fast enough
+and IVF has too little to train on): IVF with `round(sqrt(rows))`
+partitions and RaBitQ codes of 1 bit per dimension. Searches use
+`refine_factor` 10 (the candidates are ranked again with the full vectors
+read from disk) and leave `nprobes` unset: Lance 13 then visits every
+partition, so partitioning loses no neighbour. Measured on 100 000 real
+2 560-dim embeddings (Qwen3-Embedding-4B: commit messages and project
+documents; 600 real lesson statements as queries), against exact search:
+IVF_RQ 1 bit gave recall 1.000 at `k` 10 and at `k` 50, 13 ms a query,
+7.5 s to build, 35 MB on disk, 0.83 GB per searching process; IVF_PQ with
+160 sub-vectors 0.997 and 0.964, 65 ms, 58 s, 21 MB, 0.74 GB. A set
+`nprobes` costs recall at once (64 of 316 partitions: 0.98). The earlier
+choice of IVF_PQ came from the spike's synthetic vectors (§6): recall
+1.00 at `k` 300 on 1M rows, 0.9 GB per process; IVF_SQ 0.99 at 2.4 GB;
+IVF_HNSW_SQ 0.95. The values are constants in code, not options.
 
 **D11. Maintenance is the indexer's, with fixed settings.** *Proposed.*
 After a round that wrote rows, the indexer, still under `index.lock`:
@@ -461,7 +469,7 @@ D3, D15.
 
 ### L6. Search on Lance
 
-- [x] The vector leg (IVF_PQ with refine, or an exact scan below 10 000
+- [x] The vector leg (IVF_RQ with refine, or an exact scan below 10 000
       rows), the lexical leg (BM25), RRF fusion with the request's
       weights, the prefilter (`filter`), the Reranker port, `like`.
 - [x] The vector-leg reason decided from the Projector's columns, not
@@ -588,8 +596,10 @@ Items of `.claude/notes/index-risks.md` (and `p8-follow-ups.md`):
   regression test (L2).
 - **Async only.** `block_on` inside an async task panics (D13).
 - **Major versions monthly.** Pin exactly, upgrade deliberately (D18).
-- **Memory per searching process.** About 0.9 GB per million 2 560-dim
-  vectors with IVF_PQ and refine; 2.4 GB with IVF_SQ.
+- **Memory per searching process.** 0.83 GB for 100 000 real 2 560-dim
+  vectors with IVF_RQ and refine (D10); the spike saw 0.9 GB per million
+  synthetic ones with IVF_PQ, 2.4 GB with IVF_SQ. IVF_RQ at a million is
+  not measured.
 - **Build time.** A cold release build of the spike took 14 minutes; a
   release rebuild of its one crate 9 minutes (Lance's async generics are
   compiled into the caller). The debug loop is L1's first measurement.

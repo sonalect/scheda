@@ -29,7 +29,7 @@
 //! the text in the list, from 0), `digest`, and `vector`. A text without a
 //! vector (blank, or refused by the embedder) has no row there. The
 //! dataset is indexed as the rows are, a B-tree on `id` and, from
-//! [`VECTOR_INDEX_ROWS`] texts on, an IVF_PQ index of its own, so the
+//! [`VECTOR_INDEX_ROWS`] texts on, an IVF_RQ index of its own, so the
 //! vector leg looks up the nearest texts the way it looks up the nearest
 //! rows of a `text` column.
 //!
@@ -120,6 +120,11 @@ const ROUNDS_PER_INDEX_UPDATE: u64 = 50;
 
 /// Deltas of a vector index merged into one once there are more.
 const VECTOR_INDEX_DELTAS: usize = 4;
+
+/// Bits per dimension of the RaBitQ codes of a vector index: the fewest
+/// Lance takes. The search ranks its candidates again with the full
+/// vectors, and with that the codes lose no neighbour.
+const VECTOR_INDEX_BITS: u8 = 1;
 
 /// How long what a `commit` stopped naming (a version, a dropped table, a
 /// retired generation) stays on disk after it stopped: a reader reads the
@@ -1277,7 +1282,7 @@ async fn append(dataset: &Arc<Dataset>, batch: RecordBatch) -> Result<Arc<Datase
 
 /// Makes the indices `dataset` lacks: each of `scalar` (a column and the
 /// kind of its index), and, once it holds [`VECTOR_INDEX_ROWS`] rows and
-/// vectors of `dimensions` values, an IVF_PQ index on each of `vectors`.
+/// vectors of `dimensions` values, an IVF_RQ index on each of `vectors`.
 /// When it made none, it brings the indices over the rows they do not
 /// cover once more than [`UNINDEXED_ROWS`] are left out, or every
 /// [`ROUNDS_PER_INDEX_UPDATE`] rounds.
@@ -1323,20 +1328,16 @@ async fn keep_indexed(
         .context("make an index of a column")?;
         created = true;
     }
-    if total >= VECTOR_INDEX_ROWS
-        && let Some(dimensions) = dimensions
-    {
+    if total >= VECTOR_INDEX_ROWS && dimensions.is_some() {
         for target in vectors {
             let name = index_name(target, IndexType::Vector);
             if existing.contains(&name) {
                 continue;
             }
-            let params = VectorIndexParams::ivf_pq(
+            let params = VectorIndexParams::ivf_rq(
                 partitions(total),
-                8,
-                sub_vectors(dimensions),
+                VECTOR_INDEX_BITS,
                 DistanceType::Cosine,
-                50,
             );
             dataset
                 .create_index(
@@ -1372,7 +1373,7 @@ fn index_name(column: &str, kind: IndexType) -> String {
         IndexType::BTree => "btree",
         IndexType::LabelList => "labels",
         IndexType::Inverted => "fts",
-        _ => "ivf_pq",
+        _ => "ivf_rq",
     };
     format!("{column}_{tag}")
 }
@@ -1380,17 +1381,6 @@ fn index_name(column: &str, kind: IndexType) -> String {
 /// IVF partitions for `rows` rows: about the square root, at least one.
 fn partitions(rows: usize) -> usize {
     (rows as f64).sqrt().round().max(1.0) as usize
-}
-
-/// PQ sub-vectors for vectors of `dimensions`: the largest divisor of the
-/// length up to a sixteenth of it, at least one.
-fn sub_vectors(dimensions: u32) -> usize {
-    let dimensions = dimensions as usize;
-    let most = (dimensions / 16).max(1);
-    (1..=most)
-        .rev()
-        .find(|n| dimensions.is_multiple_of(*n))
-        .unwrap_or(1)
 }
 
 /// How many rows of `rows` no index covers yet, the most of any index.
@@ -1566,15 +1556,15 @@ mod tests {
             .collect();
         table.upsert(&rows).await.unwrap();
         table.maintain(1, None).await.unwrap();
-        assert!(
-            Dataset::clone(&table.rows)
-                .load_indices()
-                .await
-                .unwrap()
-                .iter()
-                .any(|index| index.name.contains("ivf_pq")),
-            "the vector index was made"
-        );
+        let vector_kinds: Vec<String> = Dataset::clone(&table.rows)
+            .describe_indices(None)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|index| index.name().ends_with("_ivf_rq"))
+            .map(|index| index.index_type().to_owned())
+            .collect();
+        assert_eq!(vector_kinds, ["IVF_RQ"], "the vector index is IVF_RQ");
         let mut longest = (0, String::new());
         let mut pending = vec![scratch.0.clone()];
         while let Some(dir) = pending.pop() {

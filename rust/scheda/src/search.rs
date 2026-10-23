@@ -14,7 +14,7 @@
 //! (`like`: every vector of each of its texts; no model is called), or
 //! takes the vector it is given (a `vector` subject: no model, no lexical
 //! leg, and only the column it names), and asks each `vector` column for
-//! the nearest vectors by cosine distance: through its IVF_PQ index, the
+//! the nearest vectors by cosine distance: through its IVF_RQ index, the
 //! candidates ranked again with the full vectors, and by an exact scan of
 //! the rows no index covers yet (a table too small for an index, and the
 //! rows written since). An `exact` search scans every vector the filter
@@ -23,9 +23,9 @@
 //! stored them: the hits depend only on the rows and the request. A
 //! `min_vector_score`, which needs `exact`, is a bound on the distance
 //! Lance applies to that scan (`distance_range`), the bound being the least
-//! distance whose score falls below it. Through an IVF_PQ index of cosine
-//! vectors Lance compares the bound with the index's own distances of the
-//! residuals (L2), and with the cosine distance only when it ranks the
+//! distance whose score falls below it. Through an IVF_RQ index of cosine
+//! vectors Lance compares the bound with the index's own estimated
+//! distances, and with the cosine distance only when it ranks the
 //! candidates again: no one bound means the same in both (Lance 13.0.0). A `text` column
 //! holds its vector in the rows. A `text list` column holds one vector per
 //! text in a texts dataset of its own, indexed the same way; its leg asks
