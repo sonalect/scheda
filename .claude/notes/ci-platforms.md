@@ -166,8 +166,12 @@ The owner deferred the rest to a later session (21 October 2026):
   `uv.lock` has them too: fix the fork once for both.
 - Release automation as in protocontract is not done.
 - A blocking port may be called once after `Close` returned (the
-  protocontract pull above): whether `Close` waits for it, or
-  protocontract starts no item for a reader that is gone.
+  protocontract pull above). **Decided 23 October 2026:** protocontract
+  starts no item for a reader that is gone (`sender.is_closed()` before
+  each `next()` in `offload::pump`); handed to an agent in
+  `protocontract-buffa.rs` by the owner. When `protocontract` 0.4.2 is
+  out, Scheda bumps it in `Cargo.lock` (the range `0.4.1` already takes
+  it) and repins; no other change.
 - Bazel's note "tests whose specified size is too big" stays: it measures
   against the default ranges, not `--test_timeout`, so a size right for a
   workstation is wrong for a runner and the other way round.

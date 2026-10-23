@@ -584,9 +584,10 @@ mod on_lance {
         });
     }
 
-    /// Past the vector index's threshold (10 000 rows), in groups of four
+    /// Just past the vector index's threshold (10 000 rows), so the table
+    /// has the index an exact search must not use; in groups of four
     /// Documents with the same text, so equal distances abound.
-    const ROWS: usize = 20_000;
+    const ROWS: usize = 10_400;
     const GROUP: usize = 4;
 
     fn grouped(n: usize) -> String {

@@ -202,7 +202,8 @@ mod on_lance {
 
     #[test]
     fn no_path_under_a_vault_without_a_work_tree_is_longer_than_120_characters() {
-        crate::common::both(|| async {
+        // The paths do not depend on the runtime: one run is enough.
+        crate::common::once_on_multi_thread(|| async {
             let scratch = Scratch::new("budget");
             let mirror = scratch.join("mirror.git");
             std::fs::create_dir_all(&mirror).unwrap();

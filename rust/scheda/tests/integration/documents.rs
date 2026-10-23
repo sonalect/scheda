@@ -2670,8 +2670,8 @@ fn an_empty_batch_waits_for_no_lock_and_answers_with_the_state_now() {
         let scratch = Scratch::new("token-empty-locked");
         let path = scratch.join("vault");
         // A short deadline: a batch that waited for the lock would be
-        // `ABORTED` after two seconds, and the test would fail on it.
-        let vault = open(&path, OpenOptions::default().with_write_timeout_ms(2_000))
+        // `ABORTED` after half a second, and the test would fail on it.
+        let vault = open(&path, OpenOptions::default().with_write_timeout_ms(500))
             .await
             .unwrap();
         declare(&vault, json!({"name": "notes", "schema": {"standard": {}}})).await;
@@ -2683,7 +2683,6 @@ fn an_empty_batch_waits_for_no_lock_and_answers_with_the_state_now() {
             .unwrap();
         held.lock().unwrap();
 
-        let started = Instant::now();
         let in_vault = batch(&vault, Vec::new()).await.unwrap();
         let notes = collection_of(&vault, "notes").await.unwrap();
         let in_collection = notes
@@ -2692,10 +2691,6 @@ fn an_empty_batch_waits_for_no_lock_and_answers_with_the_state_now() {
             ))
             .await
             .unwrap();
-        assert!(
-            started.elapsed() < Duration::from_millis(1_500),
-            "an empty batch does not wait for the lock"
-        );
         for reply in [in_vault, in_collection] {
             assert!(reply.results.is_empty());
             assert_eq!(reply.version.as_deref(), Some(token_of(&path).as_str()));

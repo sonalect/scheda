@@ -41,8 +41,23 @@ Vault and a full learn instead of a migration.
    repository is not there" and a local tree with a non-UTF-8 path too.
    `REPLICATION` stays for the mirror and for what no code names.
 
-3. **The gate's `integration_test` takes about 90 s** (about 30 s before
-   G1): find the slow G1/G2 tests and shorten them.
+3. **Done 23 October 2026: the time of the gate's `integration_test`.**
+   The 90 s were gone before the work: 21 s in the gate, after the tests
+   moved to tmpfs (22 October). Measured per test (libtest
+   `--report-time`, each slow one alone too): most "slow" tests were slow
+   only under contention. Fixed: the exact-search fixture 20 000 → 10 400
+   rows (just past the vector index's threshold; 17 → 7 s); the path budget
+   runs on one runtime (`common::once_on_multi_thread`; 7 → 4 s); the
+   empty-batch test waits 0.5 s for the refused write, not 2 s, and its
+   copy in `runtime.rs` is gone; the two port-change tests repeat 10 and 5
+   times in the gate (under 1.2 s each) and 200 and 50 times in their
+   `…_200_times` twins, ignored, run by hand (owner's decision). Measured
+   with Cargo on 32 cores: the sum of the test times 311 → 280 s, the run
+   24 → 19 s. The run is now bound by contention, not by one test: tests
+   under 1 s alone take 10–13 s side by side.
+   Left as they are: the pack tests (400 appends: the merges must run many
+   times) and the budget's 10 050 Documents (the vector index's files are
+   part of what it measures).
 4. **Done 23 October 2026: the G3 check of a listing from an id prefix.**
    `documents::tests::a_listing_of_an_id_prefix_reads_only_the_trees_on_its_way`
    counts the folders `Snap::list` reads (`repo::listed`, tests only): 4 of

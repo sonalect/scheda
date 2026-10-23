@@ -343,6 +343,24 @@ where
         .block_on(test());
 }
 
+/// Runs `test` once, on a multi-thread runtime, with libgit2 isolated as
+/// [`both`] does: for a test whose subject does not depend on the runtime
+/// (what a Vault leaves on disk), where [`both`] would do the same work
+/// twice.
+#[cfg(feature = "index")]
+pub fn once_on_multi_thread<F, Fut>(test: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = ()>,
+{
+    isolate_library_git();
+    Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(test());
+}
+
 /// Opens the Vault at `path` with `options` and no port.
 pub async fn open(path: &Path, options: OpenOptions) -> Result<DynVaultAsync, Error> {
     Scheda.open(opening(path, options)).await?.to_async_inline()

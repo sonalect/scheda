@@ -552,49 +552,6 @@ fn a_write_dropped_while_it_waits_for_the_lock_writes_nothing_and_takes_no_lock(
 }
 
 #[test]
-fn an_empty_batch_waits_for_no_lock_and_answers_with_the_state_now() {
-    both(|| async {
-        let (_scratch, path) = fresh("runtime-empty-batch");
-        // The deadline of a write that waits is two seconds: a batch with no
-        // write must not be one.
-        let vault = open(&path, options().with_write_timeout_ms(2_000))
-            .await
-            .unwrap();
-        let notes = collection(&vault, "notes").await.unwrap();
-        let held = hold_write_lock(&path);
-        let started = Instant::now();
-        let in_collection = within(
-            "an empty batch of a collection",
-            notes.batch(stream_of(Vec::<DocumentOperation>::new())),
-        )
-        .await
-        .unwrap();
-        let in_vault = within(
-            "an empty batch of the Vault",
-            vault.batch_documents(stream_of(Vec::<VaultDocumentOperation>::new())),
-        )
-        .await
-        .unwrap();
-        assert!(started.elapsed() < Duration::from_millis(1_500));
-        for reply in [in_collection, in_vault] {
-            assert!(reply.results.is_empty());
-            assert_eq!(reply.version.as_deref(), Some(head(&path).as_str()));
-        }
-        // A batch that writes waits for the lock and is refused at the
-        // deadline.
-        let error = notes
-            .batch(stream_of(vec![operation(Operation::Upsert(Box::new(
-                upsert("a.md", "late"),
-            )))]))
-            .await
-            .unwrap_err();
-        assert!(error.is(Code::Aborted), "{error}");
-        drop(held);
-        vault.close(Empty::default()).await.unwrap();
-    });
-}
-
-#[test]
 fn a_request_that_can_never_succeed_fails_at_once_while_the_write_lock_is_held() {
     both(|| async {
         let (_scratch, path) = fresh("runtime-prechecks");

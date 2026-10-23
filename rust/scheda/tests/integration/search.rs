@@ -2575,7 +2575,22 @@ pub(crate) mod on_lance {
 
     #[test]
     fn a_port_change_gives_a_number_the_index_state_reaches_with_its_verdict() {
-        both(|| async {
+        port_changes(10);
+    }
+
+    /// The test above with 200 rounds on both runtimes: a race between a
+    /// port change and the look that compares it has many chances to show.
+    #[test]
+    #[ignore = "repeats 200 times to catch a race: run by hand"]
+    fn a_port_change_gives_a_number_the_index_state_reaches_with_its_verdict_200_times() {
+        port_changes(200);
+    }
+
+    /// `rounds` rounds of port changes on the Vault that indexes, with an
+    /// hour's poll and no write: each verdict is waited for by its number
+    /// alone, on `Watch` and on `Status` in turn.
+    fn port_changes(rounds: usize) {
+        both(|| async move {
             let scratch = Scratch::new("search-port-change");
             let path = scratch.join("vault");
             crate::common::vault(&path);
@@ -2635,7 +2650,7 @@ pub(crate) mod on_lance {
                 assert_eq!(state.stored_version, head);
                 state
             };
-            for round in 0..200 {
+            for round in 0..rounds {
                 let by_watch = round % 2 == 0;
 
                 // An embedder of another model, then the Index's again.
@@ -2683,7 +2698,23 @@ pub(crate) mod on_lance {
     #[test]
     fn a_vault_beside_the_one_that_indexes_reaches_the_number_of_its_port_change_with_its_verdict()
     {
-        both(|| async {
+        beside_port_changes(10, 5);
+    }
+
+    /// The test above with 200 rounds while the other Vault is idle and 50
+    /// while its round holds `index.lock`, on both runtimes: a race has many
+    /// chances to show.
+    #[test]
+    #[ignore = "repeats 200 and 50 times to catch a race: run by hand"]
+    fn a_vault_beside_the_one_that_indexes_reaches_the_number_of_its_port_change_200_times() {
+        beside_port_changes(200, 50);
+    }
+
+    /// A Vault beside the one that indexes, on the same path: `idle` rounds
+    /// of port changes with the Index at `HEAD`, then `held` rounds while
+    /// the other Vault's round holds `index.lock`.
+    fn beside_port_changes(idle: usize, held: usize) {
+        both(|| async move {
             let scratch = Scratch::new("search-port-change-beside");
             let path = scratch.join("vault");
             crate::common::vault(&path);
@@ -2748,7 +2779,7 @@ pub(crate) mod on_lance {
             };
 
             // The Index at `HEAD`, A idle: B's looks find it current.
-            for _ in 0..200 {
+            for _ in 0..idle {
                 let change = beside
                     .set_embedder(embedder("topics@2", &beside_calls))
                     .await
@@ -2778,7 +2809,7 @@ pub(crate) mod on_lance {
 
             // The Index behind `HEAD`, A in a round with `index.lock` held:
             // B learns each verdict while A's round still runs.
-            for round in 0..50 {
+            for round in 0..held {
                 let before = indexer.status(Empty::default()).await.unwrap().version;
                 let projected = fx.calls.projected.load(Ordering::SeqCst);
                 let hold = fx.calls.hold();
