@@ -217,7 +217,7 @@ pub(crate) fn load(snap: &Snap) -> Result<Declarations, Error> {
 ///
 /// # Errors
 ///
-/// Only when the commit cannot be read (`STORAGE` or `REPLICATION`).
+/// Only when the commit cannot be read (`STORAGE`, `DATA_LOSS`, or `REPLICATION`).
 pub(crate) fn load_each(snap: &Snap) -> Result<(Declarations, Vec<Fault>), Error> {
     let mut collections = BTreeMap::new();
     let mut faults = Vec::new();

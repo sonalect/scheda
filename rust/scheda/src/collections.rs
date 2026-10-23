@@ -162,8 +162,8 @@ impl crate::vault::Vault {
     ///
     /// # Errors
     ///
-    /// `INVALID_ARGUMENT` when a collection file is not valid; `STORAGE` or
-    /// `REPLICATION` when git cannot be read.
+    /// `INVALID_ARGUMENT` when a collection file is not valid; `STORAGE`,
+    /// `DATA_LOSS`, or `REPLICATION` when git cannot be read.
     pub(crate) fn list_collections(
         &self,
         _cx: &Blocking,
@@ -237,8 +237,8 @@ impl crate::vault::Vault {
     /// `NOT_FOUND` for a name that is not declared (but a deletion with
     /// `ignore_missing`); `FAILED_PRECONDITION` for a change of the kind,
     /// `isolated`, or `encrypted`, or a deletion, of a collection that holds
-    /// Documents; `ABORTED` when `HEAD` moved under the write; `STORAGE` or
-    /// `REPLICATION` when a file or git fails.
+    /// Documents; `ABORTED` when `HEAD` moved under the write; `STORAGE`,
+    /// `DATA_LOSS`, or `REPLICATION` when a file or git fails.
     pub(crate) fn write_collection_held(
         &self,
         cx: &Blocking,

@@ -228,7 +228,7 @@ impl Overlay {
     ///
     /// # Errors
     ///
-    /// `STORAGE` or `REPLICATION` when the library fails.
+    /// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when the library fails.
     pub(crate) fn over(real: &Repository) -> Result<Overlay, Fault> {
         let objects = real.commondir().join("objects");
         let objects = CString::new(objects.as_os_str().as_encoded_bytes()).map_err(|_| {
@@ -271,7 +271,7 @@ impl Overlay {
     ///
     /// # Errors
     ///
-    /// `STORAGE` or `REPLICATION` when a file or the library fails.
+    /// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when a file or the library fails.
     pub(crate) fn store(
         self,
         real: &Repository,
@@ -675,7 +675,7 @@ pub(crate) enum Step {
 ///
 /// # Errors
 ///
-/// `STORAGE` or `REPLICATION` when a file or the library fails; the first
+/// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when a file or the library fails; the first
 /// failure, after the other repository was tried.
 pub(crate) fn merge_all(
     cx: &Blocking,
@@ -797,7 +797,7 @@ pub(crate) fn make_room(git: &Repository, root: &Path, merges: &Merges) -> Resul
 ///
 /// # Errors
 ///
-/// `STORAGE` or `REPLICATION` when a file or the library fails. Nothing
+/// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when a file or the library fails. Nothing
 /// that was readable becomes unreadable: a failure leaves loose objects
 /// that are also packed, or packs that are also merged.
 pub(crate) fn merge_due(

@@ -164,8 +164,6 @@ The owner deferred the rest to a later session (21 October 2026):
   tag of uv 0.11.3+ locks: eight DEBUG warnings per run (cryptography's
   cp315 wheels, skipped, which 3.14 does not use anyway). Knowqore's
   `uv.lock` has them too: fix the fork once for both.
-- Bazel's DEBUG advice to pin each `git_override` by `commit` instead of
-  `tag` (eight repositories).
 - Release automation as in protocontract is not done.
 - A blocking port may be called once after `Close` returned (the
   protocontract pull above): whether `Close` waits for it, or

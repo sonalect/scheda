@@ -109,7 +109,7 @@ pub(crate) fn lock_file_of(repo: &Repository) -> Option<PathBuf> {
 ///
 /// # Errors
 ///
-/// `STORAGE` or `REPLICATION` when the library fails.
+/// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when the library fails.
 pub(crate) fn register(repo: &Repository) -> Result<(), Fault> {
     let Some(lock_file) = lock_file_of(repo) else {
         return Ok(());

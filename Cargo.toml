@@ -10,44 +10,49 @@ repository = "https://github.com/sonalect/scheda"
 version = "0.26.0"
 
 [workspace.dependencies]
-age = { version = "=0.12.1", default-features = false, features = ["armor"] }
-buffa = { version = "=0.9.2", features = ["json"] }
-buffa-types = { version = "=0.9.2", default-features = false, features = [
+# Caret ranges, not `=` pins: Scheda is a library, and an exact pin conflicts
+# with a consumer on any other version. The floor is the version Scheda was
+# tested with and rises only when its code needs a newer one. Cargo.lock
+# holds the exact versions we build and test, and moves only under the
+# quarantine (.claude/rules/dependency-quarantine.md).
+age = { version = "0.12.1", default-features = false, features = ["armor"] }
+buffa = { version = "0.9.2", features = ["json"] }
+buffa-types = { version = "0.9.2", default-features = false, features = [
     "json",
     "std",
 ] }
-clap = { version = "=4.6.7", features = ["derive"] }
-futures-util = { version = "=0.3.34", default-features = false, features = [
+clap = { version = "4.6.7", features = ["derive"] }
+futures-util = { version = "0.3.34", default-features = false, features = [
     "alloc",
 ] }
-git2 = { version = "=0.21.0", default-features = false, features = [
+git2 = { version = "0.21.0", default-features = false, features = [
     "vendored-libgit2",
 ] }
-lance = { version = "=13.0.0", default-features = false }
-lance-index = { version = "=13.0.0", default-features = false }
-lance-linalg = { version = "=13.0.0", default-features = false }
-libgit2-sys = "=0.18.8"
-libz-sys = { version = "=1.1.30", default-features = false, features = ["libc"] }
+lance = { version = "13.0.0", default-features = false }
+lance-index = { version = "13.0.0", default-features = false }
+lance-linalg = { version = "13.0.0", default-features = false }
+libgit2-sys = "0.18.8"
+libz-sys = { version = "1.1.30", default-features = false, features = ["libc"] }
 mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.3", features = [
     "override",
 ] }
-model2vec-rs = { version = "=0.3.0", default-features = false, features = [
+model2vec-rs = { version = "0.3.0", default-features = false, features = [
     "fancy-regex",
     "local-only",
 ] }
-protocontract = "=0.4.1"
-protovalidate-buffa = { version = "=0.7.2", default-features = false }
-regex = "=1.13.1"
+protocontract = "0.4.1"
+protovalidate-buffa = { version = "0.7.2", default-features = false }
+regex = "1.13.1"
 scheda = { path = "rust/scheda" }
 scheda-api = { path = "rust/api" }
 scheda-blocking = { path = "rust/blocking" }
-serde = { version = "=1.0.229", features = ["derive"] }
-serde_ignored = "=0.1.14"
-serde_json = "=1.0.154"
-sha2 = "=0.11.1"
-tokio = { version = "=1.54.0", default-features = false }
-ureq = { version = "=3.4.2", features = ["json"] }
-yaml_serde = "=0.10.7"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_ignored = "0.1.14"
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tokio = { version = "1.54.0", default-features = false }
+ureq = { version = "3.4.2", features = ["json"] }
+yaml_serde = "0.10.7"
 
 [workspace.lints.rust]
 warnings = "deny"

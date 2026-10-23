@@ -20,7 +20,11 @@ each is small.
 - **`index watch` and a closed stdout.** Without `--until-settled`, the
   CLI notices that its reader has gone only when it writes the next
   state, which comes with the next indexer round. `index watch | head -1`
-  can stay alive until the Vault changes.
+  can stay alive until the Vault changes. **Not planned (owner, 23 October
+  2026):** very low priority; it concerns only the command line, not the
+  library, whose `Index.Watch` stream ends when its caller drops it. If
+  ever taken: `poll()` for `POLLERR` on stdout on Unix; Windows has no
+  known signal.
 - **A CLI query on a Vault no process indexes.** A process without an
   embedder flag does not index a collection with a `vector` column (the
   CLI Projector marks `body` `vector`). On such a Vault a query waits for

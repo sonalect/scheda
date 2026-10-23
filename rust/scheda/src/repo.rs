@@ -1206,7 +1206,7 @@ impl Snap {
     pub(crate) fn commit_info(&self, id: Oid) -> Result<CommitInfo, Fault> {
         let Some(repo) = self.repository() else {
             return Err(Fault::new(
-                VaultErrorCode::Replication,
+                VaultErrorCode::DataLoss,
                 "the repository is not there",
             ));
         };
@@ -1228,7 +1228,7 @@ impl Snap {
         BLOB_READS.with(|reads| reads.set(reads.get() + 1));
         let Some(repo) = self.repository() else {
             return Err(Fault::new(
-                VaultErrorCode::Replication,
+                VaultErrorCode::DataLoss,
                 "the repository is not there",
             ));
         };
@@ -1296,6 +1296,8 @@ impl Snap {
             return Ok(None);
         }
         let tree = repo.find_tree(node.id).map_err(lib_fault)?;
+        #[cfg(test)]
+        listed::note(rel);
         let children = tree
             .iter()
             .filter_map(|entry| {
@@ -1347,6 +1349,27 @@ impl Snap {
             }
         }
         Ok(())
+    }
+}
+
+/// The folders [`Snap::list`] read on this thread, in order: a test counts
+/// the trees a walk reads with it.
+#[cfg(test)]
+pub(crate) mod listed {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static LISTED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Notes that the folder `rel` was read.
+    pub(crate) fn note(rel: &str) {
+        LISTED.with_borrow_mut(|listed| listed.push(rel.to_owned()));
+    }
+
+    /// The folders read since the last call, and a fresh count.
+    pub(crate) fn take() -> Vec<String> {
+        LISTED.take()
     }
 }
 

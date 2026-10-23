@@ -8,6 +8,40 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- `VAULT_ERROR_CODE_DATA_LOSS`: the Vault's own git data is missing or
+  damaged (an object, a tree, a reference, a configuration, or the
+  repository itself). Not retryable; restore the Vault from its mirror or
+  a copy.
+
+### Changed
+
+- A failure of the git library on the Vault's own repository is no longer
+  `REPLICATION` unless it is one: a missing or damaged object, tree,
+  reference, configuration, index, or repository is now `DATA_LOSS`, and
+  so is a tree that holds a path that is not UTF-8. A caller that treated
+  `REPLICATION` as "the Vault cannot be read" should also handle
+  `DATA_LOSS`. `REPLICATION` stays for a failure of the exchange with the
+  mirror and for any git failure no other code names.
+- Dependencies are stated as caret ranges, not exact `=` pins. Scheda no
+  longer forces its exact versions on a consumer: a consumer's own
+  `Cargo.lock` picks any compatible version (for example a tokio patch
+  release) without waiting for a Scheda release. The floors are the
+  versions Scheda was tested with.
+
+### Fixed
+
+- A `text list` column marked `scalar_index` now gets an index (Lance's
+  label list): a `term` or `terms` filter on it reads the index instead of
+  every row. Before, no index was made for such a column, silently. The
+  index is made on the next write to the collection; no rebuild is needed.
+  `exists` and a negated leaf on a list still read every row.
+- A round of the indexer that fails or that `Close` stops no longer leaves
+  its Lance files with the umask's modes: it narrows them to the owner
+  however it ends, so `Check` stays clean. The files of a killed round are
+  narrowed by the next round.
+
 ## [0.26.0] - 2026-10-22
 
 The Vault of generation 4 (docs/24): one pack per commit, a layout of

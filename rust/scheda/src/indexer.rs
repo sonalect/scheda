@@ -698,6 +698,16 @@ impl Context {
             let _ = kept;
             self.apply(&look).await
         };
+        // Lance writes its files with the process umask. The round narrows
+        // them to the owner however it ends, done, failed, or stopped by
+        // `Close`, while it still holds the lock; what a killed round left
+        // is narrowed by the next one, which walks the whole Index.
+        #[cfg(feature = "index")]
+        let applied = {
+            let root = self.index.root().to_path_buf();
+            let narrowed = blocking(move |_cx| restrict_tree(&root)).await;
+            applied.and_then(|applied| narrowed.map(|()| applied))
+        };
         // The commits are written: the lock goes before anyone is told.
         drop(lock);
         let applied = applied?;
@@ -1109,7 +1119,6 @@ impl Context {
         }
         #[cfg(test)]
         hooks::before_state(&self.vault, || self.shared.signal.stopped()).await?;
-        let root = self.index.root().to_path_buf();
         let state = commit.state().unwrap_or(to);
         blocking(move |cx| {
             generation.sweep_tables(cx, &mut commit);
@@ -1117,8 +1126,7 @@ impl Context {
             if rebuild {
                 layout.switch(cx, &generation)?;
             }
-            layout.sweep(cx, Some(generation.name()), commit.retired.as_ref())?;
-            restrict_tree(&root)
+            layout.sweep(cx, Some(generation.name()), commit.retired.as_ref())
         })
         .await?;
         cache.clear();

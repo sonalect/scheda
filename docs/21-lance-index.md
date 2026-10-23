@@ -1,6 +1,6 @@
 # 21. The Index on Lance
 
-Document 21 of the Scheda package. Version 0.6, 20 October 2026.
+Document 21 of the Scheda package. Version 0.7, 23 October 2026.
 
 Status: approved by the owner on 19 October 2026. Decisions marked
 *settled* were taken with him in discussion; the others were proposed
@@ -447,7 +447,9 @@ D3, D15.
       expression, the order, `start_after`, `offset`, `limit`, the total;
       the keys of the page read at the start of the call (§8, C24).
 - *Check:* each kind of leaf over each column kind selects the exact set,
-  with and without a scalar index on the column, and Lance uses the index;
+  with and without a scalar index on the column, and Lance uses the index
+  (`store::tests::a_filter_on_each_kind_of_indexed_column_reads_its_index`:
+  a B-tree, a label list on a `text list`);
   `none_of` matches a Document without a value; the order is stable;
   paging with `start_after` neither repeats nor skips; `total` agrees with
   the page.

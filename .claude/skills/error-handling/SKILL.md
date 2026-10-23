@@ -44,6 +44,7 @@ in a new code.
 | `INDEX_STALE` | no | other Projector or embedding model: `Reindex` |
 | `INDEX_BROKEN` | no | Index damaged: `Reindex` |
 | `STORAGE` | per kind | every other I/O failure |
+| `DATA_LOSS` | no | the Vault's own git data is missing or damaged (object, tree, reference, config, repository) |
 | `REPLICATION` | no | every other git failure |
 
 Add a code only if a caller can **branch** on it. Edit the proto, then
@@ -68,7 +69,7 @@ return Err(Fault::new(VaultErrorCode::NotFound, "no such collection").into());
 | Add a frame | `.context(frame)`; lazy: `.with_context(\|\| format!(…))` |
 | `std::io::Error` | `.map_err(error::io)` (then `.with_path`, `.context`) |
 | git CLI failure (stderr) | `error::git_fault(stderr)` (the code from `GitFailure::classify`) |
-| git library failure (`git2::Error`) | `error::lib_fault(err)`: a locked file (`ErrorCode::Locked`) -> `ABORTED`; class `Os`, `Filesystem`, `NoMemory` -> `STORAGE`; the rest -> `REPLICATION`; the library error is the source. A repository of a format the library cannot read (SHA-256, reftable) is `UNIMPLEMENTED`, raised where it is opened (`repo`) |
+| git library failure (`git2::Error`) | `error::lib_fault(err)`: a locked file (`ErrorCode::Locked`) -> `ABORTED`; class `Os`, `Filesystem`, `NoMemory` -> `STORAGE`; code `HashsumMismatch` or class `Odb`, `Object`, `Zlib`, `Sha1`, `Tree`, `Tag`, `Index`, `Indexer`, `Reference`, `Repository`, `Config`, `Worktree` -> `DATA_LOSS`; the rest -> `REPLICATION`; the library error is the source. A repository of a format the library cannot read (SHA-256, reftable) is `UNIMPLEMENTED`, raised where it is opened (`repo`) |
 | Other foreign error (serde, Tantivy, USearch, UTF-8) | `.or_fault(code, message)` / `.or_fault_with(code, \|\| …)` |
 | Poisoned lock | `error::mutex(&m, frame)` (`RuntimeCode::Panicked`) |
 | Guard / early return | `return Err(fault.into())` (anything `Into<Error>`) |

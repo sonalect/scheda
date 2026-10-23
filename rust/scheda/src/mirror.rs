@@ -75,7 +75,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// `STORAGE` or `REPLICATION` when git cannot be read.
+    /// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when git cannot be read.
     pub(crate) fn mirror_info(&self, _cx: &Blocking) -> Result<MirrorInfo, Error> {
         let snap = self.repos().snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
@@ -278,7 +278,7 @@ impl Vault {
 /// # Errors
 ///
 /// The codes above; `ABORTED` (retryable) when the write lock is not free
-/// within `write_timeout_ms`; `STORAGE` or `REPLICATION` when git fails.
+/// within `write_timeout_ms`; `STORAGE`, `DATA_LOSS`, or `REPLICATION` when git fails.
 pub(crate) async fn set(pass: &Pass, mirror_setting: MirrorSetting) -> Result<Empty, Error> {
     stored::validate(&mirror_setting).context("set the mirror")?;
     let url = mirror_setting
@@ -300,7 +300,7 @@ pub(crate) async fn set(pass: &Pass, mirror_setting: MirrorSetting) -> Result<Em
 /// # Errors
 ///
 /// `NOT_FOUND` as above; `ABORTED` (retryable) when the write lock is not
-/// free within `write_timeout_ms`; `STORAGE` or `REPLICATION` when git
+/// free within `write_timeout_ms`; `STORAGE`, `DATA_LOSS`, or `REPLICATION` when git
 /// fails.
 pub(crate) async fn remove(pass: &Pass) -> Result<Empty, Error> {
     let held = acquire(pass).await?;
@@ -437,7 +437,7 @@ async fn pull_now(pass: &Pass) -> Result<(), Error> {
 
 fn repository_missing() -> Fault {
     Fault::new(
-        VaultErrorCode::Replication,
+        VaultErrorCode::DataLoss,
         "the repository of the Vault is not there",
     )
 }

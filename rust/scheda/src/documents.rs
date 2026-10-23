@@ -827,7 +827,7 @@ mod tests {
 
     use scheda_api::v1::{Encryption, VaultErrorCode};
 
-    use super::{Found, Walk, check_documents, encode, path_of, read_found};
+    use super::{Found, Walk, WalkState, check_documents, encode, path_of, read_found};
     use crate::collection::{self, Declaration, Declarations};
     use crate::error::{Error, Fault};
     use crate::repo::{Repos, Snap, Views, fixture};
@@ -937,6 +937,56 @@ mod tests {
         ]
         .into_iter()
         .find(|code| error.is(*code))
+    }
+
+    /// A listing that starts at an id prefix and stops at the first id
+    /// outside it reads only the trees on its way: the collection folder,
+    /// the folders down to the prefix, and the next folder, which holds the
+    /// first id outside it. None of the folders before the prefix, and none
+    /// after that one; a whole listing reads every folder.
+    #[test]
+    fn a_listing_of_an_id_prefix_reads_only_the_trees_on_its_way() {
+        let scratch = Scratch::new("prefix-listing");
+        scratch.declare("notes", "  standard: {}\n");
+        // 300 Documents in folders of two levels, by the first and the
+        // second byte of the id: `notes/_62/_34/b40.md`.
+        for &first in b"abc" {
+            for second in b'0'..=b'9' {
+                for third in b'0'..=b'9' {
+                    let id = format!("{}{}{}.md", first as char, second as char, third as char);
+                    scratch.write(&format!("notes/_{first:02x}/_{second:02x}/{id}"), b"x");
+                }
+            }
+        }
+        let declarations = scratch.declarations();
+        let notes = decl(&declarations, "notes");
+        let snap = scratch.snap(&notes);
+
+        crate::repo::listed::take();
+        let mut walk = WalkState::new(&snap, &notes)
+            .unwrap()
+            .starting_after(String::from("b4"));
+        let mut found = Vec::new();
+        while let Some(id) = walk.next_id(&snap, &notes).unwrap() {
+            let inside = id.starts_with("b4");
+            found.push(id.to_owned());
+            if !inside {
+                break;
+            }
+        }
+        let expected: Vec<String> = (0..10)
+            .map(|n| format!("b4{n}.md"))
+            .chain([String::from("b50.md")])
+            .collect();
+        assert_eq!(found, expected);
+        assert_eq!(
+            crate::repo::listed::take(),
+            ["notes", "notes/_62", "notes/_62/_34", "notes/_62/_35"]
+        );
+
+        let mut whole = Walk::new(&snap, &notes, None).unwrap();
+        assert_eq!(ids(&mut whole).len(), 300);
+        assert_eq!(crate::repo::listed::take().len(), 1 + 3 + 30);
     }
 
     #[test]

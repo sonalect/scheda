@@ -247,7 +247,7 @@ fn collision(folder: &str, name: &str) -> Error {
 /// # Errors
 ///
 /// `INVALID_ARGUMENT` when the write names an id as a file and as a folder;
-/// `STORAGE` or `REPLICATION` when the library fails.
+/// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when the library fails.
 pub(crate) fn apply(
     snap: &Snap,
     mem: &Repository,
@@ -381,7 +381,7 @@ pub(crate) struct Moved {
 ///
 /// # Errors
 ///
-/// `REPLICATION` for a path that is not UTF-8; `STORAGE` or `REPLICATION`
+/// `DATA_LOSS` for a path that is not UTF-8; `STORAGE`, `DATA_LOSS`, or `REPLICATION`
 /// when the library fails.
 pub(crate) fn moved(
     repo: &Repository,
@@ -428,7 +428,7 @@ fn diff(
         }
         let Ok(name) = std::str::from_utf8(&name) else {
             return Err(Fault::new(
-                VaultErrorCode::Replication,
+                VaultErrorCode::DataLoss,
                 "a tree holds a path that is not UTF-8",
             )
             .into());

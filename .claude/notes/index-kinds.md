@@ -32,9 +32,17 @@ positions, no stemming) on each `fts` column, and IVF_PQ (cosine, refine
   (`store::tests::the_indices_are_made_and_the_scans_use_them`). Lists,
   booleans, numbers, and the prefix and range leaves are not.
 
-## Proposed fix
+## Fix: done 23 October 2026
 
-Point 2 put to the owner on 21 October 2026, not answered yet.
+Accepted by the owner on 23 October 2026, all three points. A `text list`
+with `scalar_index` gets a LabelList index (`Column::scalar_kind` in
+`store.rs`, named `{column}_labels`); the plan test
+`store::tests::a_filter_on_each_kind_of_indexed_column_reads_its_index`
+checks every column kind and leaf, the rows the label list finds, and the
+index after `optimize_indices`. Lance serves on a list `term` and `terms`
+(`array_has`); `exists` (`cardinality`) and a negated leaf (`is_null or
+not …`) still scan, since a label list does not track nulls. The points as
+proposed:
 
 1. A `text list` with `scalar_index` gets Lance's LabelList index, which
    serves `array_has`: Scheda's leaf on a list, `any_of` included. No
@@ -63,7 +71,11 @@ The owner's task of 21 October 2026, set for after 0.26; start only on his
 word. Not a format change: the index is rebuilt from the stored vectors.
 
 - Measure the vector index kind, IVF_PQ (today) against IVF_RQ, on real
-  Qwen3 embeddings (2560 dimensions), at 100 000 and at 1 000 000 vectors.
+  Qwen3 embeddings (2560 dimensions), at 100 000 vectors. 1 000 000 only
+  if the smaller run gives no clear answer (the owner, 23 October 2026:
+  a fast decision, not a week of measuring). In a folder of its own
+  outside this repository; the prompt for that session was written on
+  23 October 2026.
 - Criteria, in order: recall of the top k against exact search as the
   reference (first: a reranker cannot bring back what the vector leg did
   not find); peak memory of building and of searching; time of building
@@ -80,5 +92,5 @@ word. Not a format change: the index is rebuilt from the stored vectors.
 **Why:** the owner asked whether the index kinds are the best ones
 (21 October 2026) and will come back to it.
 
-**How to apply:** fix the gap before a fork trims index kinds; tick L2's
-*Check* only once the plan test is in place.
+**How to apply:** a fork that trims index kinds keeps LabelList (with
+Bitmap, which it is built on).

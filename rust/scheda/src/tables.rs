@@ -2744,6 +2744,12 @@ mod tests {
         assert_eq!(embedded.load(Ordering::SeqCst), 25);
         vault.close().await.unwrap();
         assert_eq!(live_commit(&vault).await, live, "the commit did not move");
+        // The stopped round narrowed the modes of the Lance files it wrote
+        // with the process umask: `Check` finds nothing wide.
+        assert_eq!(
+            crate::fs::check_scheda_owner_only(&path).unwrap(),
+            Vec::new()
+        );
         let (dir, _) = live_table(&vault, "notes").await;
         let (rows_dir, named) = {
             let root = Index::new(&path).root().to_path_buf();

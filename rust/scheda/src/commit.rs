@@ -304,7 +304,7 @@ impl Committer {
     ///
     /// # Errors
     ///
-    /// `STORAGE` or `REPLICATION` when the recovery fails.
+    /// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when the recovery fails.
     pub(crate) fn adopt(&self, _cx: &Blocking, held: Held) -> Result<WriteLock<'_>, Error> {
         // A Vault without a work tree notes no path, so it has nothing to
         // settle.
@@ -507,7 +507,7 @@ impl WriteLock<'_> {
     ///
     /// # Errors
     ///
-    /// The codes above, and `STORAGE` or `REPLICATION` when a file or git
+    /// The codes above, and `STORAGE`, `DATA_LOSS`, or `REPLICATION` when a file or git
     /// fails.
     pub(crate) fn commit_in(
         &self,
@@ -547,7 +547,7 @@ impl WriteLock<'_> {
         }
         let Some(git) = snap.repository() else {
             return Err(Fault::new(
-                VaultErrorCode::Replication,
+                VaultErrorCode::DataLoss,
                 "the repository to write to is not there",
             )
             .into());
@@ -668,13 +668,13 @@ impl WriteLock<'_> {
     /// # Errors
     ///
     /// `FAILED_PRECONDITION` for a detached `HEAD`; `ABORTED` for a branch
-    /// that moved; `REPLICATION` for a path that is not UTF-8; `STORAGE` or
-    /// `REPLICATION` when a file or git fails.
+    /// that moved; `REPLICATION` for a path that is not UTF-8; `STORAGE`,
+    /// `DATA_LOSS`, or `REPLICATION` when a file or git fails.
     pub(crate) fn advance_to(&self, snap: &Snap, new: Oid, message: &str) -> Result<(), Error> {
         let vault = self.root();
         let Some(git) = snap.repository() else {
             return Err(Fault::new(
-                VaultErrorCode::Replication,
+                VaultErrorCode::DataLoss,
                 "the repository to write to is not there",
             )
             .into());
@@ -1754,19 +1754,7 @@ mod tests {
             .await
             .unwrap();
         scratch.out(&["fsck", "--full", "--strict"]);
-        settle_index(&vault).await;
         vault.close().await.unwrap();
-    }
-
-    /// Lets the indexer's round for `HEAD` end before a handle closes. A
-    /// round that `Close` cuts leaves its Lance files with the umask's
-    /// modes, and `Check` reports them (a known issue); these tests are
-    /// about what a cut write leaves in git.
-    async fn settle_index(vault: &std::sync::Arc<crate::vault::Vault>) {
-        #[cfg(feature = "index")]
-        crate::testing::wait_indexed(vault).await;
-        #[cfg(not(feature = "index"))]
-        let _ = vault;
     }
 
     #[tokio::test]
@@ -1793,7 +1781,6 @@ mod tests {
                 .await
                 .unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
-        settle_index(&vault).await;
         vault.close().await.unwrap();
         assert_eq!(scratch.out(&["rev-parse", "HEAD"]), head, "branch kept");
         whole_without_files(&scratch, &["a.md"]).await;
@@ -1824,7 +1811,6 @@ mod tests {
                 .await
                 .unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
-        settle_index(&vault).await;
         vault.close().await.unwrap();
         assert_eq!(scratch.out(&["show", "HEAD:notes/c.md"]), "c");
         whole_without_files(&scratch, &["a.md", "z.md", "c.md"]).await;
@@ -1850,7 +1836,6 @@ mod tests {
         assert!(!scratch.0.join("notes").exists(), "the files lag");
         let root = scratch.canonical();
         assert!(step(&vault, move |cx, _| pending(cx, &root)).await.unwrap());
-        settle_index(&vault).await;
         vault.close().await.unwrap();
         let vault = scratch.open().await;
         assert!(scratch.0.join("notes/.collection.yaml").is_file());

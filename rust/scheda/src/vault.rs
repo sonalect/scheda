@@ -177,7 +177,7 @@ impl Vault {
     /// # Errors
     ///
     /// The codes above; `ABORTED` when the write lock is not free within
-    /// `write_timeout_ms`; `STORAGE` or `REPLICATION` when the path or git
+    /// `write_timeout_ms`; `STORAGE`, `DATA_LOSS`, or `REPLICATION` when the path or git
     /// cannot be read or written.
     pub(crate) async fn open(
         path: PathBuf,
@@ -215,7 +215,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// `STORAGE` or `REPLICATION` when `HEAD` cannot be read.
+    /// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when `HEAD` cannot be read.
     pub(crate) fn info(&self, cx: &Blocking) -> Result<VaultInfo, Error> {
         Ok(VaultInfo::default()
             .with_path(self.path.to_string_lossy().into_owned())
@@ -236,7 +236,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// `STORAGE` or `REPLICATION` when `HEAD` cannot be read.
+    /// `STORAGE`, `DATA_LOSS`, or `REPLICATION` when `HEAD` cannot be read.
     pub(crate) fn state_now(&self, _cx: &Blocking) -> Result<State, Error> {
         Ok(State::of(&self.repos.views().context("read HEAD")?))
     }

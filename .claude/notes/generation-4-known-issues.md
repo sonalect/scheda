@@ -33,20 +33,23 @@ Vault and a full learn instead of a migration.
    the old pack stays, readers go on, and the next merge removes it
    (a pack whose objects are all in another one is dropped). Needs a
    test with a hook that refuses the removal.
-2. **The code of a missing object.** `lib_fault` in `error.rs` maps every
-   libgit2 error that is not OS, filesystem, memory, or lock to
-   `REPLICATION`, a missing local object included. A catch-all, against
-   the error rules. A small task of its own; a proposal goes to the owner
-   first.
+2. **Done 23 October 2026: the code of a missing object.** The owner chose
+   a new code, `DATA_LOSS` (variant A of the proposal). `lib_fault` maps
+   the classes of the Vault's own data (`Odb`, `Object`, `Zlib`, `Sha1`,
+   `Tree`, `Tag`, `Index`, `Indexer`, `Reference`, `Repository`, `Config`,
+   `Worktree`) and `HashsumMismatch` to it; the hand-made faults "the
+   repository is not there" and a local tree with a non-UTF-8 path too.
+   `REPLICATION` stays for the mirror and for what no code names.
+
 3. **The gate's `integration_test` takes about 90 s** (about 30 s before
    G1): find the slow G1/G2 tests and shorten them.
-4. **G3 check not yet covered:** a listing from an id prefix that stops
-   at the first id outside it reads only the trees on its way (count the
-   trees read).
-5. **Slow measurements.** The owner allowed them (21 October 2026) for the
-   night, once every G stage is done, and not before: 100 000 writes at the pack
-   level and through a Vault without a work tree (G2), the worst merge at
-   the cap, reads with 1, 100, and 500 packs.
+4. **Done 23 October 2026: the G3 check of a listing from an id prefix.**
+   `documents::tests::a_listing_of_an_id_prefix_reads_only_the_trees_on_its_way`
+   counts the folders `Snap::list` reads (`repo::listed`, tests only): 4 of
+   34 for a prefix, all 34 for a whole listing. The code needed no change.
+
+5. **Slow measurements: done 22 October 2026** (the section
+   "Measurements" below).
 
 ## Facts for the documents (G7)
 
@@ -66,13 +69,12 @@ Vault and a full learn instead of a migration.
 
 ## Known issues (races under load)
 
-1. **A round of the indexer cut by `Close` or a kill leaves its Lance
-   files with the umask's modes** (0644 / 0755 instead of 0600 / 0700),
-   and `Check` reports them as `FAILED_PRECONDITION` until something
-   narrows them. A round narrows the modes of what it wrote only when it
-   ends. Older than generation 4; found by the G2 cut test, which now lets
-   the round end before it closes. Fix later: narrow the generation's
-   modes at open, or when the next round starts.
+1. **Done 23 October 2026: Lance's files after a cut round.** A round
+   narrows the modes of the Index however it ends (done, failed, stopped
+   by `Close`), with the lock still held; a killed round's files keep the
+   umask's modes until the next round, which walks the whole Index.
+   Tested by `tables::tests::a_round_stopped_after_lance_and_before_the_commit_is_done_again_and_nothing_else`;
+   the cut tests of `commit::tests` no longer wait for the round.
 2. **`pack::tests::close_cancels_a_running_merge_and_holds_no_lock_afterwards`
    is ignored.** Under the load of `bazel test //...` the pack lock was
    still held right after `Packer::stop` returned, in both test targets;

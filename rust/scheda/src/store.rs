@@ -196,6 +196,16 @@ impl Column {
         })
     }
 
+    /// The kind of the scalar index of the column: a B-tree, or for a
+    /// `text list` a label list, which serves a filter on whether the list
+    /// holds a value (a B-tree takes no nested field).
+    fn scalar_kind(&self) -> IndexType {
+        match self.kind {
+            Kind::TextList => IndexType::LabelList,
+            Kind::Text | Kind::Integer | Kind::Number | Kind::Boolean => IndexType::BTree,
+        }
+    }
+
     fn data_type(&self) -> DataType {
         match self.kind {
             Kind::Text => DataType::Utf8,
@@ -1198,8 +1208,8 @@ impl Table {
         }
         let mut scalar: Vec<(String, IndexType)> = vec![(String::from("id"), IndexType::BTree)];
         for column in &self.shape.columns {
-            if column.scalar_index && column.kind != Kind::TextList {
-                scalar.push((column.name.clone(), IndexType::BTree));
+            if column.scalar_index {
+                scalar.push((column.name.clone(), column.scalar_kind()));
             }
             if column.fts {
                 scalar.push((column.name.clone(), IndexType::Inverted));
@@ -1360,6 +1370,7 @@ async fn keep_indexed(
 fn index_name(column: &str, kind: IndexType) -> String {
     let tag = match kind {
         IndexType::BTree => "btree",
+        IndexType::LabelList => "labels",
         IndexType::Inverted => "fts",
         _ => "ivf_pq",
     };
@@ -1662,6 +1673,150 @@ mod tests {
             .refine(10);
         let plan = scanner.explain_plan(false).await.unwrap();
         assert!(plan.contains("ANNIvfPartition"), "{plan}");
+    }
+
+    /// Every kind of column with `scalar_index` gets an index that a filter
+    /// reads: a B-tree, and a label list for a `text list`. The filters go
+    /// through the compiler the queries use; each leaf the index can answer
+    /// is planned on it, and the two it cannot are named.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_filter_on_each_kind_of_indexed_column_reads_its_index() {
+        use scheda_api::v1::index_value::TextList;
+
+        let scratch = Scratch::new("filter-indices");
+        let indexed = |name: &str, kind: Kind| Column {
+            name: name.to_owned(),
+            kind,
+            scalar_index: true,
+            fts: false,
+            vector: false,
+        };
+        let shape = Shape {
+            columns: vec![
+                indexed("kind", Kind::Text),
+                indexed("rank", Kind::Integer),
+                indexed("weight", Kind::Number),
+                indexed("flag", Kind::Boolean),
+                indexed("tags", Kind::TextList),
+            ],
+            vectors: Vec::new(),
+            dimensions: None,
+        };
+        let mut table = Table::open(&scratch.0, "t0", &numbered(&shape), shape.clone(), None)
+            .await
+            .unwrap();
+        let row = |n: usize| {
+            let id = format!("r{n:05}");
+            // Every eleventh row has no values: the leaves meet nulls.
+            let values = if n.is_multiple_of(11) {
+                BTreeMap::new()
+            } else {
+                let tags = TextList {
+                    texts: vec![format!("t{}", n % 5), format!("u{}", n % 3)],
+                    ..TextList::default()
+                };
+                BTreeMap::from([
+                    (String::from("kind"), Value::Text(format!("k{}", n % 7))),
+                    (String::from("rank"), Value::Integer((n % 10) as i64)),
+                    (String::from("weight"), Value::Number(n as f64 / 10.0)),
+                    (String::from("flag"), Value::Boolean(n.is_multiple_of(2))),
+                    (String::from("tags"), Value::TextList(Box::new(tags))),
+                ])
+            };
+            Row {
+                file: format!("notes/{id}"),
+                order: id.clone(),
+                id,
+                values,
+                embeddings: BTreeMap::new(),
+            }
+        };
+        let rows: Vec<Row> = (0..200).map(row).collect();
+        table.upsert(&rows).await.unwrap();
+        table.maintain(1, None).await.unwrap();
+        let rows = Dataset::clone(&table.rows);
+        let names: Vec<String> = rows
+            .load_indices()
+            .await
+            .unwrap()
+            .iter()
+            .map(|index| index.name.clone())
+            .collect();
+        assert!(names.contains(&String::from("tags_labels")), "{names:?}");
+
+        let compiled = |filter: serde_json::Value| {
+            let filter: scheda_api::v1::Filter = serde_json::from_value(filter).unwrap();
+            crate::filter::compile(&filter, &shape.columns)
+        };
+        let planned = |rows: &Dataset, filter: serde_json::Value| {
+            let mut scanner = rows.scan();
+            scanner.filter_expr(compiled(filter));
+            async move { scanner.explain_plan(false).await.unwrap() }
+        };
+        let counted = |rows: &Dataset, filter: serde_json::Value| {
+            let mut scanner = rows.scan();
+            scanner.filter_expr(compiled(filter));
+            async move { scanner.count_rows().await.unwrap() }
+        };
+        let term = |column: &str, value: serde_json::Value| serde_json::json!({"term": {"column": column, "value": value}});
+        let terms = |column: &str, values: serde_json::Value| serde_json::json!({"terms": {"column": column, "values": values}});
+        let above = |column: &str, value: serde_json::Value| serde_json::json!({"range": {"column": column, "lower": {"value": value, "inclusive": true}}});
+        let exists = |column: &str| serde_json::json!({"exists": {"column": column}});
+        let none_of =
+            |filter: serde_json::Value| serde_json::json!({"noneOf": {"filters": [filter]}});
+        let served = [
+            term("kind", serde_json::json!({"text": "k3"})),
+            terms("kind", serde_json::json!([{"text": "k3"}, {"text": "k4"}])),
+            above("kind", serde_json::json!({"text": "k5"})),
+            serde_json::json!({"prefix": {"column": "kind", "prefix": "k"}}),
+            exists("kind"),
+            none_of(term("kind", serde_json::json!({"text": "k3"}))),
+            term("rank", serde_json::json!({"integer": "3"})),
+            terms(
+                "rank",
+                serde_json::json!([{"integer": "3"}, {"integer": "4"}]),
+            ),
+            above("rank", serde_json::json!({"integer": "5"})),
+            exists("rank"),
+            term("weight", serde_json::json!({"number": 0.5})),
+            above("weight", serde_json::json!({"number": 10.0})),
+            term("flag", serde_json::json!({"boolean": true})),
+            exists("flag"),
+            term("tags", serde_json::json!({"text": "t3"})),
+            terms("tags", serde_json::json!([{"text": "t3"}, {"text": "u1"}])),
+        ];
+        for filter in served {
+            let plan = planned(&rows, filter.clone()).await;
+            assert!(plan.contains("ScalarIndexQuery"), "{filter}\n{plan}");
+        }
+        // A label list answers whether a list holds a value, not whether it
+        // is empty or absent: these two read the column of every row.
+        let scanned = [
+            exists("tags"),
+            none_of(term("tags", serde_json::json!({"text": "t3"}))),
+        ];
+        for filter in scanned {
+            let plan = planned(&rows, filter.clone()).await;
+            assert!(!plan.contains("ScalarIndexQuery"), "{filter}\n{plan}");
+        }
+
+        // The label list finds the rows that hold the value, and still does
+        // once it is brought over rows written after it was made.
+        let holding = |upto: usize| {
+            (0..upto)
+                .filter(|n| !n.is_multiple_of(11) && n % 5 == 3)
+                .count()
+        };
+        let t3 = term("tags", serde_json::json!({"text": "t3"}));
+        assert_eq!(counted(&rows, t3.clone()).await, holding(200) as u64);
+        let more: Vec<Row> = (200..260).map(row).collect();
+        table.upsert(&more).await.unwrap();
+        table.maintain(ROUNDS_PER_INDEX_UPDATE, None).await.unwrap();
+        let rows = Dataset::clone(&table.rows);
+        assert_eq!(unindexed_rows(&rows).await.unwrap(), 0);
+        assert_eq!(counted(&rows, t3.clone()).await, holding(260) as u64);
+        let plan = planned(&rows, t3).await;
+        assert!(plan.contains("ScalarIndexQuery"), "{plan}");
     }
 
     /// A shape of text columns only: `title` (fts) and `kind` (a scalar

@@ -1,6 +1,6 @@
 # 24. The Vault of generation 4
 
-Document 24 of the Scheda package. Version 0.3, 22 October 2026.
+Document 24 of the Scheda package. Version 0.4, 23 October 2026.
 
 Status: approved by the owner on 21 October 2026. The decisions of §2
 were taken one at a time, with the anchor consumer's facts; the proposals
@@ -391,8 +391,10 @@ D1–D5; P4, P5, P6.
 - [x] The marker `version: 4`; a Vault of generation 3 is `GENERATION`
       (`tests/open.rs`: `a_new_vault_marker_says_version_4`,
       `a_vault_whose_marker_says_3_is_generation_in_every_open_mode_and_nothing_changes`).
-- [ ] A listing from an id prefix that stops at the first id outside it
-      reads only the trees on its way: not tested yet.
+- [x] A listing from an id prefix that stops at the first id outside it
+      reads only the trees on its way: the collection folder, the folders
+      down to the prefix, and the next one, never the folders before it
+      (`documents::tests::a_listing_of_an_id_prefix_reads_only_the_trees_on_its_way`).
 - [x] A write measured at 100 000 and at 1 000 000 Documents
       (`pack::tests::measure`, release, run once on 22 October 2026): 0.9 ms
       and 1.1 ms (max 8.1 and 10.1 ms), a get 25 and 46 us; before, with

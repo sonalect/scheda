@@ -62,12 +62,18 @@ pub enum VaultErrorCode {
     /// The storage below the Vault failed. Retryable when the failure is a
     /// passing one (interrupted, would block, busy).
     VAULT_ERROR_CODE_STORAGE = 18i32,
-    /// Exchanging writes with the mirror failed otherwise.
+    /// Exchanging writes with the mirror failed otherwise, or git failed in a
+    /// way no other code names.
     VAULT_ERROR_CODE_REPLICATION = 19i32,
     /// A query, a count, or a search with `not_before`: the Index did not
     /// reach that state within `OpenOptions.index_wait_timeout_ms`. Retryable;
     /// `Index.Status` says where the Index stands.
     VAULT_ERROR_CODE_DEADLINE_EXCEEDED = 20i32,
+    /// The Vault's own git data is missing or damaged: an object, a tree, a
+    /// reference, a configuration, or a repository the stored state needs is
+    /// not there or does not read. Not the disk (`STORAGE`) and not the mirror
+    /// (`REPLICATION`). Restore the Vault from its mirror or a copy.
+    VAULT_ERROR_CODE_DATA_LOSS = 21i32,
 }
 impl VaultErrorCode {
     ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_UNSPECIFIED`]; `Debug` prints the variant name.
@@ -133,6 +139,9 @@ impl VaultErrorCode {
     ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED`]; `Debug` prints the variant name.
     #[allow(non_upper_case_globals)]
     pub const DeadlineExceeded: Self = Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED;
+    ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_DATA_LOSS`]; `Debug` prints the variant name.
+    #[allow(non_upper_case_globals)]
+    pub const DataLoss: Self = Self::VAULT_ERROR_CODE_DATA_LOSS;
 }
 impl ::core::default::Default for VaultErrorCode {
     fn default() -> Self {
@@ -259,6 +268,7 @@ impl ::buffa::Enumeration for VaultErrorCode {
             20i32 => {
                 ::core::option::Option::Some(Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED)
             }
+            21i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_DATA_LOSS),
             _ => ::core::option::Option::None,
         }
     }
@@ -298,6 +308,7 @@ impl ::buffa::Enumeration for VaultErrorCode {
             Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED => {
                 "VAULT_ERROR_CODE_DEADLINE_EXCEEDED"
             }
+            Self::VAULT_ERROR_CODE_DATA_LOSS => "VAULT_ERROR_CODE_DATA_LOSS",
         }
     }
     fn from_proto_name(name: &str) -> ::core::option::Option<Self> {
@@ -365,6 +376,9 @@ impl ::buffa::Enumeration for VaultErrorCode {
             "VAULT_ERROR_CODE_DEADLINE_EXCEEDED" => {
                 ::core::option::Option::Some(Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED)
             }
+            "VAULT_ERROR_CODE_DATA_LOSS" => {
+                ::core::option::Option::Some(Self::VAULT_ERROR_CODE_DATA_LOSS)
+            }
             _ => ::core::option::Option::None,
         }
     }
@@ -391,6 +405,7 @@ impl ::buffa::Enumeration for VaultErrorCode {
             Self::VAULT_ERROR_CODE_STORAGE,
             Self::VAULT_ERROR_CODE_REPLICATION,
             Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED,
+            Self::VAULT_ERROR_CODE_DATA_LOSS,
         ]
     }
 }
