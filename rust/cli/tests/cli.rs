@@ -1563,14 +1563,6 @@ fn no_flag_takes_the_secret_itself() {
 fn port_flags_that_do_not_fit_together_are_invalid_argument() {
     let scratch = Scratch::new("port-flags");
     let path = new_vault(&scratch);
-    let model_dir = scratch.path("model");
-    fs::create_dir_all(&model_dir).unwrap();
-    let model = model_dir.display().to_string();
-    let lone = scratch.path("lone-model");
-    fs::create_dir_all(&lone).unwrap();
-    fs::write(lone.join("config.json"), "{}").unwrap();
-    let lone = lone.display().to_string();
-    let missing = scratch.path("no-model").display().to_string();
     let key = "--embedder-api-key-env-var";
     for args in [
         vec![
@@ -1606,20 +1598,6 @@ fn port_flags_that_do_not_fit_together_are_invalid_argument() {
             key,
             "TC_UNSET_KEY",
         ],
-        vec![
-            "--model2vec-embedder",
-            &model,
-            "--embedder-openai-url",
-            "http://127.0.0.1:1/v1",
-            "--embedder-model",
-            "m",
-            "--embedder-dimensions",
-            "8",
-        ],
-        vec!["--model2vec-embedder", &model, "--embedder-model", "m"],
-        vec!["--model2vec-embedder", &model],
-        vec!["--model2vec-embedder", &lone],
-        vec!["--model2vec-embedder", &missing],
         vec!["--reranker-cohere-url", "http://127.0.0.1:1/v1"],
         vec!["--reranker-model", "m"],
         vec!["--reranker-api-key-env-var", "TC_KEY"],

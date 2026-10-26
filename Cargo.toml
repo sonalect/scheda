@@ -36,10 +36,6 @@ libz-sys = { version = "1.1.30", default-features = false, features = ["libc"] }
 mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.3", features = [
     "override",
 ] }
-model2vec-rs = { version = "0.3.0", default-features = false, features = [
-    "fancy-regex",
-    "local-only",
-] }
 protocontract = "0.4.2"
 protovalidate-buffa = { version = "0.7.2", default-features = false }
 regex = "1.13.1"
@@ -49,7 +45,6 @@ scheda-blocking = { path = "rust/blocking" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_ignored = "0.1.14"
 serde_json = "1.0.154"
-sha2 = "0.11.1"
 tokio = { version = "1.54.0", default-features = false }
 ureq = { version = "3.4.2", features = ["json"] }
 yaml_serde = "0.10.7"

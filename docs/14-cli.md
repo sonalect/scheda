@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.88, 24 October 2026.
+Document 14 of the Scheda package. Version 0.89, 26 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -72,11 +72,10 @@ All of them go before the subcommand or after it.
 | `--write-timeout-ms N` | `OpenOptions.write_timeout_ms`: how long a write waits for the write lock; past it the write is `ABORTED`. |
 | `--encryption-passphrase-env-var NAME` | Read `NAME` and use it as `OpenOptions.encryption.passphrase`. Missing or empty variable → `INVALID_ARGUMENT` before the Vault is opened. Not with `--encryption-identity-file`. |
 | `--encryption-identity-file PATH` | An age identity file (`AGE-SECRET-KEY-…`; comments and a trailing newline as `age-keygen` writes) as `OpenOptions.encryption.identity`. Unreadable or malformed → `INVALID_ARGUMENT`. Not with `--encryption-passphrase-env-var`. |
-| `--embedder-openai-url URL` | OpenAI-compatible API root (`http`/`https`). The CLI `POST`s `{URL}embeddings`. With `--embedder-model` and `--embedder-dimensions`, or none of the three; a partial set is `INVALID_ARGUMENT`. Implements the `Embedder` port. Not with `--model2vec-embedder`. |
+| `--embedder-openai-url URL` | OpenAI-compatible API root (`http`/`https`). The CLI `POST`s `{URL}embeddings`. With `--embedder-model` and `--embedder-dimensions`, or none of the three; a partial set is `INVALID_ARGUMENT`. Implements the `Embedder` port. A local model is served the same way, by an OpenAI-compatible server on the machine (vLLM, llama.cpp). |
 | `--embedder-model NAME` | The JSON `model` of the embeddings body, and the model id of the embedder. |
 | `--embedder-dimensions N` | A positive multiple of 8: the length of the vectors (no probe); another number is `INVALID_ARGUMENT` when the Vault opens. A reply of another length fails the call. |
 | `--embedder-api-key-env-var NAME` | Read `NAME` and send `Authorization: Bearer`. Only with the HTTP embedder flags. Unset: no auth. Missing or empty variable → `INVALID_ARGUMENT`. |
-| `--model2vec-embedder DIR` | A folder with a Model2Vec model (`config.json`, `tokenizer.json`, `model.safetensors`). The CLI loads it (`model2vec-rs`, no Hub download) as the `Embedder`. A missing required file, or a path that is not a folder → `INVALID_ARGUMENT`. Extra files are allowed. Not with the HTTP embedder flags. |
 | `--reranker-cohere-url URL` | Cohere or Jina rerank API root (`http`/`https`). The CLI `POST`s `{URL}rerank`. With `--reranker-model`, or neither. Implements the `Reranker` port, used by a search with `rerankLimit`. |
 | `--reranker-model NAME` | The JSON `model` of the rerank body. |
 | `--reranker-api-key-env-var NAME` | Read `NAME` and send `Authorization: Bearer`. Only with the HTTP reranker flags. |
@@ -129,18 +128,13 @@ vector. A failure of the embedder in the
 background indexer is not the failure of a command: it shows as
 `lastError` of the Index state (`index status`, `index watch`).
 
-The Model2Vec model id is `model2vec:` plus 16 hex digits of the SHA-256
-of `config.json` followed by the byte length of `model.safetensors`, so
-moving or renaming the directory is not a model change.
-
 *Check:* `rust/cli/tests/cli.rs`: `open_flags_reach_the_library`,
 `port_flags_that_do_not_fit_together_are_invalid_argument`,
 `encryption_flags_round_trip_and_the_secret_stays_off_the_output`,
 `no_flag_takes_the_secret_itself`,
 `the_http_ports_write_vectors_and_search_like_the_library_with_the_same_ports`;
 `rust/cli/src/http.rs`: `the_embedder_fails_with_the_code_of_its_port`,
-`statuses_map_to_transient_credential_and_refused_problems`;
-`rust/cli/src/model2vec.rs` (the model id).
+`statuses_map_to_transient_credential_and_refused_problems`.
 
 ---
 
@@ -370,7 +364,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 ## Test driver
 
 `python/cli` talks to this binary. It is not a language binding (`08`).
-Three Bazel targets, three Vaults:
+Two Bazel targets, two Vaults:
 
 ```text
 bazel run //python/cli:cli_LLMs -- import
@@ -378,19 +372,15 @@ bazel run //python/cli:cli_LLMs -- reindex
 bazel run //python/cli:cli_LLMs -- find
 bazel run //python/cli:cli_LLMs -- search
 bazel run //python/cli:cli_jina -- import
-bazel run //python/cli:cli_model2vec -- import
-bazel run //python/cli:cli_model2vec -- reindex
 python -m python.cli --backend llms import
 python -m python.cli --backend jina import
-python -m python.cli --backend model2vec import
 ```
 
 `cli_LLMs` uses `<workspace>/.vault-test-LLMs` and the Qwen HTTP
 sidecars. `cli_jina` uses `<workspace>/.vault-test-jina` and the Jina
 HTTP sidecars (`jinaai/jina-embeddings-v5-text-small` +
 `jinaai/jina-reranker-v3.5`, CC BY-NC 4.0; same ports as Qwen — stop
-the Qwen processes first). `cli_model2vec` uses
-`<workspace>/.vault-test-model2vec`. `--backend` is a top-level flag
+the Qwen processes first). `--backend` is a top-level flag
 (before the subcommand). `--vault` still overrides the Vault path.
 
 Every call is a `scheda` process with `--vault` and `--mode open-existing`
@@ -404,25 +394,16 @@ a Vault yet. Then it walks `python/cli/testdata/animals/`:
 does not list the name; `collection NAME get` then `collection NAME create
 --file --note 'import fixture'` for each Document file. Existing ids are
 skipped. Those calls pass no embedder flags. A write does not wait for the
-Index and each `scheda` process stops its indexer when it exits, so for
-`cli_LLMs` and `cli_jina` the driver then runs `index watch
---until-settled` with the HTTP embedder: that process indexes the writes
-and fills the vectors. `cli_model2vec` `import` loads no model; the first
-later command that passes `--model2vec-embedder` (`reindex`, `find`, or
-`search`) indexes.
+Index and each `scheda` process stops its indexer when it exits, so the
+driver then runs `index watch --until-settled` with the HTTP embedder:
+that process indexes the writes and fills the vectors.
 
 `find`, `search`, and `reindex` require that Vault already exists
 (`import` first). `reindex` runs `index reindex`, which waits for the
 rebuild, then `index watch --until-settled`, and prints the settled
 `IndexState` as YAML (a new process's `index status` would be `{}`).
 `cli_LLMs` `reindex` uses the Qwen HTTP embedder; `cli_jina` uses Jina
-HTTP; `cli_model2vec` `reindex` uses `--model2vec-embedder`, downloading
-the missing files first from `minishlab/potion-multilingual-128M` with
-`huggingface_hub` (`hf-xet`; `config.json`, `tokenizer.json`,
-`model.safetensors`; size and hash must match the Hub tree: LFS SHA-256,
-or git blob SHA-1 for small files; `HF_TOKEN` is used when set). `find`
-and `search` use the cache as-is (no Hub). The default cache is
-`<workspace>/.cache/model2vec/potion-multilingual-128M`.
+HTTP.
 
 The embedder flags go on every call that may index or embed (`reindex`,
 `find`, `search`, the settle step of `import`), so the Vault's index is
@@ -448,11 +429,9 @@ HTTP embedder and reranker (`cli_LLMs`) default to the local Qwen sidecars
 (`bazel run //python/vllm:embedder` on `:8080`, `:reranker` on `:8081`;
 `Qwen/Qwen3-Embedding-0.6B` dim 1024 and `Qwen/Qwen3-Reranker-0.6B`).
 `cli_jina` uses `//python/vllm:embedder_jina` / `:reranker_jina` on the
-same ports (CC BY-NC). Reranker flags go on `search` only, for `cli_LLMs`
-and `cli_jina` (`--no-reranker` leaves RRF). `cli_model2vec` has no
-reranker: RRF. `--workspace`, `--vault`, `--scheda`, `--fixture`,
-`--model2vec-embedder`, and the HTTP URL/model flags override the
-defaults. The test Vaults and `.cache/` are gitignored. Index files live at
+same ports (CC BY-NC). Reranker flags go on `search` only
+(`--no-reranker` leaves RRF). `--workspace`, `--vault`, `--scheda`,
+`--fixture`, and the HTTP URL/model flags override the defaults. The test Vaults and `.cache/` are gitignored. Index files live at
 `{vault}/.scheda/` inside that tree.
 
 *Check:* `bazel test //python:lint` (the driver) and the Python driver run

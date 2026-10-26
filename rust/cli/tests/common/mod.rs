@@ -413,7 +413,6 @@ pub fn source() -> String {
         include_str!("../../src/exec.rs"),
         include_str!("../../src/http.rs"),
         include_str!("../../src/main.rs"),
-        include_str!("../../src/model2vec.rs"),
         include_str!("../../src/open.rs"),
         include_str!("../../src/projector.rs"),
         include_str!("../../src/stdio.rs"),

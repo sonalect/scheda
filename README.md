@@ -99,7 +99,7 @@ The design is a numbered package in `docs/`, in English.
 | [05-collection-declaration.md](docs/05-collection-declaration.md) | Collection declaration: kind, perimeter, journal caps; the generation is the marker's                                     |
 | [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index on Lance, its generations, who indexes, rebuild beside the live Index, `not_before`, `Collection.Get`                                                                                               |
 | [13-find-and-search.md](docs/13-find-and-search.md)   | Queries select, searches rank: the typed Filter, hybrid BM25 + nearest neighbours, Projector columns, optional reranker                   |
-| [14-cli.md](docs/14-cli.md)                           | The `scheda` CLI: one subcommand per rpc, global flags, JSON in and out (`--embedder-openai-url` or `--model2vec-embedder`; `--reranker-cohere-url`) |
+| [14-cli.md](docs/14-cli.md)                           | The `scheda` CLI: one subcommand per rpc, global flags, JSON in and out (`--embedder-openai-url`, `--reranker-cohere-url`) |
 | [07-api.md](docs/07-api.md)                           | What spans the calls of the contract (objects, write model, errors, `Close`); each rpc is described in `api/scheda/v1`                                                       |
 | [08-agent.md](docs/08-agent.md)                       | Same calls for an AI agent, declaration listing, thin transport                                                  |
 | [09-isolation.md](docs/09-isolation.md)               | No network by default (**core**); isolated collections and age encryption (**later**, in this crate)                      |
@@ -127,7 +127,7 @@ The design is a numbered package in `docs/`, in English.
 | [`rust/scheda`](rust/scheda)       | First implementation: Rust crate `scheda`                                                                                                         |
 | [`rust/cli`](rust/cli)             | Thin CLI binary `scheda`, one subcommand per rpc (`14`, AGT-2–5)                                                                                                   |
 | [`python/vllm`](python/vllm)       | `bazel run` vLLM sidecars (locked `uv.lock`; Linux)                                                                                               |
-| [`python/cli`](python/cli)         | Testdata driver: `cli_LLMs`, `cli_jina` (CC BY-NC), `cli_model2vec`; fixtures in `python/cli/testdata` |
+| [`python/cli`](python/cli)         | Testdata driver: `cli_LLMs`, `cli_jina` (CC BY-NC); fixtures in `python/cli/testdata` |
 | [`MODULE.bazel`](MODULE.bazel)     | Bazel module: host toolchain, crate_universe, Buf, linters                                                                                        |
 
 Dependency versions live only in the root `[workspace.dependencies]`. Member
@@ -265,7 +265,7 @@ for /f %i in ('rustc --print host-tuple') do cargo build -p scheda-cli --release
 ## Python CLI
 
 Driver for the `scheda` binary against `python/cli/testdata/animals`
-(`mammals`, `birds`, `reptiles`). Three Bazel targets, three gitignored
+(`mammals`, `birds`, `reptiles`). Two Bazel targets, two gitignored
 Vaults. Flags and JSON: [`docs/14-cli.md`](docs/14-cli.md).
 
 Run commands from the clone root.
@@ -274,9 +274,8 @@ Run commands from the clone root.
 | --- | --- | --- |
 | `//python/cli:cli_LLMs` | `.vault-test-LLMs` | Qwen HTTP sidecars (`:8080` / `:8081`) |
 | `//python/cli:cli_jina` | `.vault-test-jina` | Jina HTTP sidecars (`:8080` / `:8081`, CC BY-NC) |
-| `//python/cli:cli_model2vec` | `.vault-test-model2vec` | `minishlab/potion-multilingual-128M` on `reindex` / `search` |
 
-`python -m python.cli --backend llms|jina|model2vec …` is the same driver.
+`python -m python.cli --backend llms|jina …` is the same driver.
 
 ### LLMs
 
@@ -391,88 +390,6 @@ bazel run //python/cli:cli_jina -- search --query '{
 `cli_jina` defaults to those Hub ids (dim 1024). `--lexical-only` does not
 call the reranker, but the embedder sidecar must run for new writes to be
 indexed.
-
-### Model2Vec
-
-> **Disclaimer:** Model2Vec is too weak for the paraphrases in this
-> walkthrough. Any Hub checkpoint in this family (static token lookup,
-> including `potion-multilingual-128M`) returns the **wrong** Documents on
-> vector-only `search`. This section exists so you can run the **same
-> commands as LLMs** and see the quality gap versus Qwen. For the
-> expected hits, use `//python/cli:cli_LLMs`.
-
-No GPU. `import` does not load Model2Vec (no Hub fetch, no
-`--model2vec-embedder`); `reindex`, `find`, and `search` do, and `find` and
-`search` use the cache as-is (no Hub). On first `reindex`, `huggingface_hub`
-(`hf-xet`) downloads `minishlab/potion-multilingual-128M` (multilingual,
-~512 MiB) into
-`<workspace>/.cache/model2vec/potion-multilingual-128M` (`config.json`,
-`tokenizer.json`, `model.safetensors`; tqdm on stderr). Later `reindex`
-runs reuse the cache after size and Hub hash checks (LFS SHA-256, or git
-blob SHA-1 for small files). `search` loads that cache to embed the
-query (no Hub). Set `HF_TOKEN` to a Hugging Face token if the Hub
-throttles anonymous downloads. `--model2vec-embedder DIR` overrides the
-cache path. Search uses RRF (no local reranker).
-
-#### 1. Import and reindex
-
-```bash
-bazel run //python/cli:cli_model2vec -- import
-bazel run //python/cli:cli_model2vec -- reindex
-```
-
-`import` makes `.vault-test-model2vec` if needed, `create-collection`s
-from each `.collection.yaml`, then `create`s the missing Document files. It
-does not load Model2Vec. `reindex` downloads the cache if needed, loads
-the embedder once, and fills the vectors in the Index. A later `reindex`
-builds a new Index generation after a change of embedder model.
-Stdout of `reindex` is the settled `IndexState` as YAML. The CLI default
-Projector is one text column `body` (the whole Document, when it is UTF-8
-text).
-
-#### 2. `find`
-
-A `Filter` on the `id` of a Document and the CLI column `body`. A query
-selects; it does not rank. `term` is the whole value and `prefix` its
-beginning; a word in the file is a search. Other column names are
-`INVALID_ARGUMENT`. Stdout is YAML: `total` (from the summary the query
-streams first) then each Document, `---` between documents (`raw` only with
-`--include-raw`). One filter applies to every collection in scope;
-`--collection NAME` queries one collection.
-
-```bash
-bazel run //python/cli:cli_model2vec -- find
-bazel run //python/cli:cli_model2vec -- find --collection mammals
-bazel run //python/cli:cli_model2vec -- find --collection mammals --filter '{"prefix":{"column":"id","prefix":"giant"}}'
-bazel run //python/cli:cli_model2vec -- find --filter '{"term":{"column":"id","value":{"text":"giant-panda"}}}'
-```
-
-#### 3. `search`
-
-Hybrid BM25 + nearest neighbours, then RRF (no local reranker). Loads the Model2Vec
-cache to embed the query (run `reindex` first). Hits are the top `k`
-after ranking (`k` unset → 10). `lexicalWeight` `0` turns BM25 off
-(meaning only). `--topic` / bare `search` use
-`python/cli/testdata/animals/topics.yaml` (paraphrases; expected ids).
-Hits print as YAML (`---` between hits), after `vectorLeg`; `--include-raw`
-adds each hit's `raw`. Bare `search` prints one YAML document per topic.
-
-```bash
-bazel run //python/cli:cli_model2vec -- search --collection mammals --k 2 --text "seasonal migration"
-```
-
-```bash
-bazel run //python/cli:cli_model2vec -- search --query '{
-  "text": "species that hunt when there is no light by measuring how long a self-made sound takes to bounce back from prey",
-  "k": 2,
-  "lexicalWeight": 0
-}'
-```
-
-```bash
-bazel run //python/cli:cli_model2vec -- search --topic biosonar
-bazel run //python/cli:cli_model2vec -- search
-```
 
 ## Changelog
 

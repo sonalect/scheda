@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.81, 20 October 2026.
+Document 12 of the Scheda package. Version 0.82, 26 October 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -99,8 +99,9 @@ that is noted on the line. Coming back does not restore an A2 name.
   The watcher question is open in the consumer's requirements too; no P
   stage takes it, so `reindex` after a human edit stays the answer.
 - Collection-named tools or product rules in the CLI (`08`).
-- Weights in this repository. `--model2vec-embedder` still accepts an
-  operator folder (`14`). The crate does not ship a model (QRY-5). Prefer
+- Weights in this repository. The crate does not ship a model (QRY-5); the
+  Model2Vec embedder of A4 (`--model2vec-embedder`) was removed on 26
+  October 2026, too weak for the searches it served. Prefer
   `--embedder-openai-url` / `--reranker-cohere-url` for Qwen3-class
   models. Local sidecars: `bazel run //python/vllm:embedder` and
   `//python/vllm:reranker` (locked `vllm` in `uv.lock`; GPU is the

@@ -12,7 +12,7 @@ use scheda::v1::{Author, Encryption, OpenMode, OpenOptions, VaultOpening, WorkTr
 
 use crate::args::{Cli, ModeArg, WorkTreeArg};
 use crate::stdio::{invalid, unreadable};
-use crate::{http, model2vec, projector};
+use crate::{http, projector};
 
 /// The request that opens the Vault the flags name.
 ///
@@ -140,24 +140,12 @@ fn embedder(cli: &Cli) -> Result<Option<EmbedderRef>, Error> {
     let url = nonempty(cli.embedder_openai_url.as_deref());
     let model = nonempty(cli.embedder_model.as_deref());
     let key_env = nonempty(cli.embedder_api_key_env_var.as_deref());
-    let dir = cli.model2vec_embedder.as_deref();
-    if dir.is_some()
-        && (url.is_some()
-            || model.is_some()
-            || cli.embedder_dimensions.is_some()
-            || key_env.is_some())
-    {
-        return Err(invalid(
-            "use HTTP embedder flags or --model2vec-embedder, not both",
-        ));
-    }
-    match (url, model, cli.embedder_dimensions, dir) {
-        (None, None, None, None) if key_env.is_some() => Err(invalid(
+    match (url, model, cli.embedder_dimensions) {
+        (None, None, None) if key_env.is_some() => Err(invalid(
             "--embedder-api-key-env-var requires the HTTP embedder flags",
         )),
-        (None, None, None, None) => Ok(None),
-        (None, None, None, Some(dir)) => model2vec::embedder(dir).map(Some),
-        (Some(url), Some(model), Some(dimensions), None) => {
+        (None, None, None) => Ok(None),
+        (Some(url), Some(model), Some(dimensions)) => {
             http::embedder(url, model, dimensions, key_env).map(Some)
         }
         _ => Err(invalid(

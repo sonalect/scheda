@@ -19,6 +19,5 @@ __pycache__/
 /.vault-test/
 /.vault-test-LLMs/
 /.vault-test-jina/
-/.vault-test-model2vec/
 /.cache/
 /.scheda/

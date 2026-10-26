@@ -91,57 +91,22 @@ pub(crate) struct Cli {
 
     /// OpenAI-compatible API root, joined with `embeddings`. With
     /// `--embedder-model` and `--embedder-dimensions`, or none.
-    #[arg(
-        long,
-        global = true,
-        value_name = "URL",
-        conflicts_with = "model2vec_embedder"
-    )]
+    #[arg(long, global = true, value_name = "URL")]
     pub(crate) embedder_openai_url: Option<String>,
 
     /// The `model` field of the embeddings request, and the model id of the
     /// embedder.
-    #[arg(
-        long,
-        global = true,
-        value_name = "NAME",
-        conflicts_with = "model2vec_embedder"
-    )]
+    #[arg(long, global = true, value_name = "NAME")]
     pub(crate) embedder_model: Option<String>,
 
     /// The length of the vectors the HTTP embedder gives.
-    #[arg(
-        long,
-        global = true,
-        value_name = "N",
-        conflicts_with = "model2vec_embedder"
-    )]
+    #[arg(long, global = true, value_name = "N")]
     pub(crate) embedder_dimensions: Option<u32>,
 
     /// Env var whose value is the `Authorization: Bearer` token of the HTTP
     /// embedder. Only with the HTTP embedder flags.
-    #[arg(
-        long,
-        global = true,
-        value_name = "NAME",
-        conflicts_with = "model2vec_embedder"
-    )]
+    #[arg(long, global = true, value_name = "NAME")]
     pub(crate) embedder_api_key_env_var: Option<String>,
-
-    /// A folder with a Model2Vec model (`config.json`, `tokenizer.json`,
-    /// `model.safetensors`), the embedder of the Vault.
-    #[arg(
-        long,
-        global = true,
-        value_name = "DIR",
-        conflicts_with_all = [
-            "embedder_openai_url",
-            "embedder_model",
-            "embedder_dimensions",
-            "embedder_api_key_env_var"
-        ]
-    )]
-    pub(crate) model2vec_embedder: Option<PathBuf>,
 
     /// Cohere or Jina rerank API root, joined with `rerank`. With
     /// `--reranker-model`, or neither. Used by a search with `rerankLimit`.

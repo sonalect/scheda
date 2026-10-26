@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import logging
 import math
@@ -12,15 +11,10 @@ import os
 import shutil
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-
-from huggingface_hub import hf_hub_download
-from huggingface_hub.errors import HfHubHTTPError
 
 _LOG = logging.getLogger("python.cli")
 
@@ -31,13 +25,6 @@ _TOPICS_NAME = "topics.yaml"
 _ENV_BACKEND = "SCHEDA_CLI_BACKEND"
 _DEFAULT_VAULT_LLMS = ".vault-test-LLMs"
 _DEFAULT_VAULT_JINA = ".vault-test-jina"
-_DEFAULT_VAULT_MODEL2VEC = ".vault-test-model2vec"
-_MODEL2VEC_REPO = "minishlab/potion-multilingual-128M"
-_DEFAULT_MODEL2VEC_DIR = (
-    Path(".cache") / "model2vec" / _MODEL2VEC_REPO.rsplit("/", 1)[-1]
-)
-_MODEL2VEC_REVISION = "73908c3438cf03b6a01bcb9611d62b23d0726f08"
-_MODEL2VEC_FILES = ("config.json", "tokenizer.json", "model.safetensors")
 _DEFAULT_FIXTURE = Path("python") / "cli" / "testdata" / "animals"
 _WORKSPACE_MARKERS = ("MODULE.bazel", "Cargo.toml")
 _DEFAULT_EMBEDDER_URL = "http://127.0.0.1:8080/v1/"
@@ -52,8 +39,6 @@ _DEFAULT_SEARCH_K = 10
 # How many fused hits the reranker scores when a search reranks: at least `k`.
 _DEFAULT_RERANK_LIMIT = 50
 _IMPORT_NOTE = "import fixture"
-_DOWNLOAD_TIMEOUT_S = 300
-_DOWNLOAD_CHUNK = 1024 * 1024
 
 
 class Backend(StrEnum):
@@ -61,7 +46,6 @@ class Backend(StrEnum):
 
     LLMS = "llms"
     JINA = "jina"
-    MODEL2VEC = "model2vec"
 
 
 class ToolError(Exception):
@@ -112,15 +96,6 @@ class CliResult:
 
 
 @dataclass(frozen=True, slots=True)
-class HubBlob:
-    """Hub tree entry for one required Model2Vec file."""
-
-    size: int
-    sha256: str | None
-    git_oid: str
-
-
-@dataclass(frozen=True, slots=True)
 class Paths:
     """Resolved workspace, Vault, binary, and fixture."""
 
@@ -141,7 +116,6 @@ class DriverModels:
     embedder_dimensions: int
     reranker_url: str
     reranker_model: str
-    model2vec_dir: Path | None
 
     def embedder_argv(self) -> tuple[str, ...]:
         """Global embedder flags, or none.
@@ -150,10 +124,6 @@ class DriverModels:
         column `vector`), so `--lexical-only` still passes it: it changes the
         ranking, not who indexes.
         """
-        if self.backend is Backend.MODEL2VEC:
-            if self.model2vec_dir is None:
-                return ()
-            return ("--model2vec-embedder", str(self.model2vec_dir))
         return (
             "--embedder-openai-url",
             self.embedder_url,
@@ -176,7 +146,7 @@ class DriverModels:
 
     def reranks(self) -> bool:
         """Whether this backend has a reranker to pass."""
-        return not self.lexical_only and self.backend is not Backend.MODEL2VEC
+        return not self.lexical_only
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -197,9 +167,7 @@ def _parser() -> argparse.ArgumentParser:
             "Talk to the scheda binary to load CLI testdata. "
             f"{Backend.LLMS}: Qwen HTTP sidecars and {_DEFAULT_VAULT_LLMS}. "
             f"{Backend.JINA}: Jina HTTP sidecars (CC BY-NC) and "
-            f"{_DEFAULT_VAULT_JINA}. "
-            f"{Backend.MODEL2VEC}: {_DEFAULT_VAULT_MODEL2VEC}; "
-            f"Model2Vec ({_DEFAULT_MODEL2VEC_DIR}) on reindex, find, and search."
+            f"{_DEFAULT_VAULT_JINA}."
         ),
         suggest_on_error=True,
     )
@@ -210,8 +178,6 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             f"{Backend.LLMS}: HTTP embedder/reranker and {_DEFAULT_VAULT_LLMS}. "
             f"{Backend.JINA}: Jina HTTP (CC BY-NC) and {_DEFAULT_VAULT_JINA}. "
-            f"{Backend.MODEL2VEC}: {_DEFAULT_VAULT_MODEL2VEC}; "
-            f"--model2vec-embedder on reindex, find, and search. "
             f"Default: {_ENV_BACKEND}, or required. "
             "Must precede the subcommand. Bazel targets pass this flag."
         ),
@@ -230,9 +196,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "Vault root (default: "
-            f"<workspace>/{_DEFAULT_VAULT_LLMS}, "
-            f"{_DEFAULT_VAULT_JINA}, or "
-            f"{_DEFAULT_VAULT_MODEL2VEC})"
+            f"<workspace>/{_DEFAULT_VAULT_LLMS} or {_DEFAULT_VAULT_JINA})"
         ),
     )
     shared.add_argument(
@@ -279,17 +243,6 @@ def _parser() -> argparse.ArgumentParser:
         help=f"Rerank model (default: {_DEFAULT_RERANKER_MODEL})",
     )
     shared.add_argument(
-        "--model2vec-embedder",
-        type=Path,
-        metavar="DIR",
-        help=(
-            f"Model2Vec directory (default: <workspace>/{_DEFAULT_MODEL2VEC_DIR}; "
-            f"downloads {_MODEL2VEC_REPO} when files are missing). "
-            f"Only with --backend {Backend.MODEL2VEC}. "
-            "Passed to scheda on reindex, find, and search."
-        ),
-    )
-    shared.add_argument(
         "--lexical-only",
         action="store_true",
         help=(
@@ -303,8 +256,7 @@ def _parser() -> argparse.ArgumentParser:
         parents=[shared],
         help=(
             "Create the backend Vault if needed "
-            f"({_DEFAULT_VAULT_LLMS}, {_DEFAULT_VAULT_JINA}, or "
-            f"{_DEFAULT_VAULT_MODEL2VEC}) "
+            f"({_DEFAULT_VAULT_LLMS} or {_DEFAULT_VAULT_JINA}) "
             "and add missing fixture documents"
         ),
     )
@@ -396,7 +348,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _cmd_import(args: argparse.Namespace) -> None:
-    paths, models, cli = _session(args)
+    paths, _models, cli = _session(args)
     _ensure_vault(cli, paths.vault)
     collections = _fixture_collections(paths.fixture)
     existing = _collection_names(cli.list_collections())
@@ -418,11 +370,9 @@ def _cmd_import(args: argparse.Namespace) -> None:
             added += 1
     # A write does not wait for the Index, and each `scheda` process stops
     # its indexer when it exits. One process with the embedder brings the
-    # Index to the writes; Model2Vec is loaded later, by find / search /
-    # reindex.
-    if models.backend is not Backend.MODEL2VEC:
-        _LOG.info("index the writes")
-        cli.settle_index()
+    # Index to the writes.
+    _LOG.info("index the writes")
+    cli.settle_index()
     _LOG.info(
         "import done: added %d, skipped %d, vault %s", added, skipped, paths.vault
     )
@@ -561,12 +511,7 @@ def _session(args: argparse.Namespace) -> tuple[Paths, DriverModels, SchedaCli]:
     paths = resolve_paths(
         args.workspace, args.vault, args.scheda, args.fixture, backend
     )
-    models = _driver_models(
-        args,
-        backend,
-        paths.workspace,
-        command=args.command,
-    )
+    models = _driver_models(args, backend)
     _LOG.info("scheda %s", paths.scheda)
     _LOG.info("backend %s vault %s", backend, paths.vault)
     _log_models(models)
@@ -648,15 +593,14 @@ def _backend(args: argparse.Namespace) -> Backend:
     raw = args.backend
     if raw is None:
         msg = (
-            "pass --backend llms|jina|model2vec before the subcommand "
-            "(or bazel run //python/cli:cli_LLMs / //python/cli:cli_jina / "
-            "//python/cli:cli_model2vec)"
+            "pass --backend llms|jina before the subcommand "
+            "(or bazel run //python/cli:cli_LLMs / //python/cli:cli_jina)"
         )
         raise ToolError(msg)
     try:
         return Backend(raw)
     except ValueError:
-        msg = f"unknown --backend {raw!r} (llms, jina, or model2vec)"
+        msg = f"unknown --backend {raw!r} (llms or jina)"
         raise ToolError(msg) from None
 
 
@@ -831,19 +775,10 @@ def _yaml_plain_ok(text: str) -> bool:
     return False
 
 
-def _driver_models(
-    args: argparse.Namespace,
-    backend: Backend,
-    workspace: Path,
-    *,
-    command: str,
-) -> DriverModels:
+def _driver_models(args: argparse.Namespace, backend: Backend) -> DriverModels:
     dimensions = args.embedder_dimensions
     if dimensions < 1:
         msg = "--embedder-dimensions must be >= 1"
-        raise ToolError(msg)
-    if backend is not Backend.MODEL2VEC and args.model2vec_embedder is not None:
-        msg = "--model2vec-embedder requires --backend model2vec"
         raise ToolError(msg)
     embedder_model = args.embedder_model
     reranker_model = args.reranker_model
@@ -852,14 +787,6 @@ def _driver_models(
             embedder_model = _DEFAULT_JINA_EMBEDDER_MODEL
         if reranker_model == _DEFAULT_RERANKER_MODEL:
             reranker_model = _DEFAULT_JINA_RERANKER_MODEL
-    model2vec_dir: Path | None = None
-    if backend is Backend.MODEL2VEC and command in ("reindex", "find", "search"):
-        directory = _model2vec_dir(workspace, args.model2vec_embedder)
-        if command == "reindex":
-            model2vec_dir = _ensure_model2vec_embedder(directory)
-        else:
-            _require_model2vec_cache(directory)
-            model2vec_dir = directory
     return DriverModels(
         backend=backend,
         lexical_only=args.lexical_only,
@@ -868,19 +795,12 @@ def _driver_models(
         embedder_dimensions=dimensions,
         reranker_url=args.reranker_cohere_url,
         reranker_model=reranker_model,
-        model2vec_dir=model2vec_dir,
     )
 
 
 def _log_models(models: DriverModels) -> None:
     if models.lexical_only:
         _LOG.info("lexical ranking only (--lexical-only)")
-    if models.backend is Backend.MODEL2VEC:
-        if models.model2vec_dir is None:
-            _LOG.info("model2vec embedder only on reindex, find, and search")
-            return
-        _LOG.info("model2vec embedder %s", models.model2vec_dir)
-        return
     _LOG.info(
         "embedder %s %s dim=%d",
         models.embedder_model,
@@ -913,219 +833,9 @@ def resolve_paths(
 
 
 def _default_vault(backend: Backend) -> str:
-    if backend is Backend.MODEL2VEC:
-        return _DEFAULT_VAULT_MODEL2VEC
     if backend is Backend.JINA:
         return _DEFAULT_VAULT_JINA
     return _DEFAULT_VAULT_LLMS
-
-
-def _model2vec_dir(workspace: Path, explicit: Path | None) -> Path:
-    if explicit is None:
-        return (workspace / _DEFAULT_MODEL2VEC_DIR).resolve()
-    path = explicit.expanduser()
-    if not path.is_absolute():
-        path = workspace / path
-    return path.resolve()
-
-
-def _require_model2vec_cache(directory: Path) -> None:
-    missing = [name for name in _MODEL2VEC_FILES if not (directory / name).is_file()]
-    if not missing:
-        return
-    msg = (
-        f"model2vec cache missing {', '.join(missing)} in {directory}; "
-        "run reindex to download"
-    )
-    raise ToolError(msg)
-
-
-def _ensure_model2vec_embedder(directory: Path) -> Path:
-    directory.mkdir(parents=True, exist_ok=True)
-    blobs = _hub_blobs()
-    missing: list[str] = []
-    for name in _MODEL2VEC_FILES:
-        path = directory / name
-        blob = blobs[name]
-        if _blob_matches(path, name, blob):
-            continue
-        if path.exists():
-            _LOG.info("retry %s (size or hash mismatch)", name)
-            path.unlink(missing_ok=True)
-        missing.append(name)
-    if not missing:
-        _LOG.info("model2vec cache hit %s", directory)
-        return directory
-    _LOG.info(
-        "download %s (%s) into %s%s",
-        _MODEL2VEC_REPO,
-        ", ".join(missing),
-        directory,
-        " (HF_TOKEN)" if _hf_token() else "",
-    )
-    for name in missing:
-        _download_hf_file(name, directory / name, blobs[name])
-    return directory
-
-
-def _hub_blobs() -> dict[str, HubBlob]:
-    url = f"https://huggingface.co/api/models/{_MODEL2VEC_REPO}/tree/{_MODEL2VEC_REVISION}"
-    payload = _http_json(url)
-    if not isinstance(payload, list):
-        msg = f"Hub tree is not a list: {url}"
-        raise ToolError(msg)
-    wanted = set(_MODEL2VEC_FILES)
-    blobs: dict[str, HubBlob] = {}
-    for item in payload:
-        parsed = _hub_blob_from_tree(item, wanted)
-        if parsed is None:
-            continue
-        name, meta = parsed
-        blobs[name] = meta
-    missing = [name for name in _MODEL2VEC_FILES if name not in blobs]
-    if missing:
-        msg = f"Hub tree missing {', '.join(missing)}"
-        raise ToolError(msg)
-    return blobs
-
-
-def _hub_blob_from_tree(item: object, wanted: set[str]) -> tuple[str, HubBlob] | None:
-    if not isinstance(item, dict) or item.get("type") != "file":
-        return None
-    name = item.get("path")
-    if not isinstance(name, str) or name not in wanted:
-        return None
-    git_oid = item.get("oid")
-    if not isinstance(git_oid, str) or not git_oid:
-        msg = f"Hub tree missing oid for {name}"
-        raise ToolError(msg)
-    size = item.get("size")
-    sha256: str | None = None
-    lfs = item.get("lfs")
-    if isinstance(lfs, dict):
-        oid = lfs.get("oid")
-        if not isinstance(oid, str) or not oid:
-            msg = f"Hub tree missing LFS oid for {name}"
-            raise ToolError(msg)
-        sha256 = oid.removeprefix("sha256:")
-        lfs_size = lfs.get("size")
-        if isinstance(lfs_size, int) and lfs_size > 0:
-            size = lfs_size
-    if not isinstance(size, int) or size < 1:
-        msg = f"Hub tree missing size for {name}"
-        raise ToolError(msg)
-    return name, HubBlob(size=size, sha256=sha256, git_oid=git_oid)
-
-
-def _http_json(url: str) -> Any:
-    headers = {**_hf_headers(), "Accept": "application/json"}
-    request = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(request, timeout=_DOWNLOAD_TIMEOUT_S) as response:
-            raw = response.read()
-    except (OSError, urllib.error.URLError) as err:
-        msg = f"failed to fetch {url}: {err}"
-        raise ToolError(msg) from err
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as err:
-        msg = f"{url} is not JSON: {err}"
-        raise ToolError(msg) from err
-
-
-def _blob_matches(path: Path, name: str, blob: HubBlob) -> bool:
-    try:
-        _verify_blob(path, name, blob)
-    except ToolError:
-        return False
-    return True
-
-
-def _verify_blob(path: Path, name: str, blob: HubBlob) -> None:
-    if not path.is_file():
-        msg = f"missing {name}"
-        raise ToolError(msg)
-    size = path.stat().st_size
-    if size != blob.size:
-        msg = f"{name} size {size} != Hub {blob.size}"
-        raise ToolError(msg)
-    if blob.sha256 is not None:
-        got = _sha256_file(path)
-        if got != blob.sha256:
-            msg = f"{name} sha256 {got} != Hub {blob.sha256}"
-            raise ToolError(msg)
-        return
-    got = _git_blob_sha1(path.read_bytes())
-    if got != blob.git_oid:
-        msg = f"{name} git oid {got} != Hub {blob.git_oid}"
-        raise ToolError(msg)
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(_DOWNLOAD_CHUNK)
-            if not chunk:
-                break
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _git_blob_sha1(data: bytes) -> str:
-    digest = hashlib.sha1()  # noqa: S324
-    digest.update(f"blob {len(data)}\0".encode())
-    digest.update(data)
-    return digest.hexdigest()
-
-
-def _hf_token() -> str | None:
-    token = os.environ.get("HF_TOKEN", "").strip()
-    return token or None
-
-
-def _hf_headers() -> dict[str, str]:
-    headers = {
-        "User-Agent": (
-            f"scheda-python-cli; hf_hub/1.28.0; python/{sys.version_info.major}."
-            f"{sys.version_info.minor}.{sys.version_info.micro}"
-        ),
-        "Accept-Encoding": "identity",
-    }
-    token = _hf_token()
-    if token is not None:
-        headers["Authorization"] = f"Bearer {token}"
-    return headers
-
-
-def _download_hf_file(name: str, dest: Path, blob: HubBlob) -> None:
-    _LOG.info("fetch %s (%d bytes) via huggingface_hub", name, blob.size)
-    try:
-        saved = Path(
-            hf_hub_download(
-                repo_id=_MODEL2VEC_REPO,
-                filename=name,
-                revision=_MODEL2VEC_REVISION,
-                local_dir=dest.parent,
-                token=_hf_token(),
-                user_agent="scheda-python-cli",
-            )
-        )
-    except (OSError, RuntimeError, ValueError, HfHubHTTPError) as err:
-        msg = f"failed to download {_MODEL2VEC_REPO}/{name}: {err}"
-        raise ToolError(msg) from err
-    if saved.resolve() != dest.resolve():
-        try:
-            dest.unlink(missing_ok=True)
-            dest.hardlink_to(saved)
-        except OSError:
-            shutil.copy2(saved, dest)
-    try:
-        _verify_blob(dest, name, blob)
-    except ToolError:
-        dest.unlink(missing_ok=True)
-        raise
-    _LOG.info("wrote %s (%d bytes, hash ok)", name, blob.size)
 
 
 def _workspace(explicit: Path | None) -> Path:

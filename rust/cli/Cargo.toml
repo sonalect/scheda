@@ -18,12 +18,10 @@ age = { workspace = true }
 buffa-types = { workspace = true }
 clap = { workspace = true }
 mimalloc = { workspace = true }
-model2vec-rs = { workspace = true }
 protocontract = { workspace = true }
 scheda = { workspace = true, features = ["encrypt"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 ureq = { workspace = true }
 

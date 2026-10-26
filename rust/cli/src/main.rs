@@ -13,7 +13,6 @@ mod args;
 mod call;
 mod exec;
 mod http;
-mod model2vec;
 mod open;
 mod projector;
 mod stdio;

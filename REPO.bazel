@@ -6,7 +6,6 @@ ignore_directories([
     "**/.scheda",
     "**/.vault-test",
     "**/.vault-test-LLMs",
-    "**/.vault-test-model2vec",
     "**/.cache",
     "**/__pycache__",
 ])

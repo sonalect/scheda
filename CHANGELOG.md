@@ -17,6 +17,17 @@ API or on-disk format changes bump the minor.
   with a passphrase (scrypt) or an X25519 identity and never runs P-256.
   Ignored until `age` moves on (the owner's decision, 26 October 2026).
 
+### Removed
+
+- The CLI's Model2Vec embedder: the global flag `--model2vec-embedder DIR`
+  and the `model2vec-rs` dependency, with `tokenizers` and the C++ of
+  `esaxx-rs` under it. The model was too weak for the searches it served.
+  A local model is served as any other: an OpenAI-compatible server on the
+  machine (vLLM, llama.cpp) behind `--embedder-openai-url`. Without the
+  C++ of `esaxx-rs`, which forced the static C runtime, the CLI links with
+  Cargo on Windows. The Python driver loses the `model2vec` backend and
+  the target `//python/cli:cli_model2vec`.
+
 ### Fixed
 
 - A merge of packs lets its lock go when it ends, also while another thread
