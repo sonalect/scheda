@@ -203,7 +203,13 @@ fn fill_then_rename(file: fs::File, tmp: &Path, path: &Path, bytes: &[u8]) -> Re
 /// `STORAGE` when it cannot be opened or flushed.
 #[cfg(feature = "index")]
 pub(crate) fn sync_file(path: &Path) -> Result<(), Error> {
-    fs::File::open(path)
+    // Windows flushes a file only through a handle that may write to it
+    // (`FlushFileBuffers` wants `GENERIC_WRITE`; a read-only handle is
+    // "Access is denied"); Unix flushes through any.
+    fs::OpenOptions::new()
+        .read(true)
+        .write(cfg!(windows))
+        .open(path)
         .and_then(|file| file.sync_all())
         .map_err(io)
         .with_context(|| format!("flush {} to disk", path.display()))?;

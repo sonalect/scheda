@@ -30,6 +30,12 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- On Windows the Index stayed behind every write: flushing a file of a
+  Lance table to disk failed with `STORAGE` ("Access is denied"), so each
+  round of the indexer failed and a query that waits for the Index ended
+  with `DEADLINE_EXCEEDED`. The file was opened for reading only, and
+  Windows flushes only through a handle that may write; it is opened so
+  there now.
 - A merge of packs lets its lock go when it ends, also while another thread
   of the process starts a program. Closing the file was the only release,
   and a child process forked in that moment kept the lock until it ran
