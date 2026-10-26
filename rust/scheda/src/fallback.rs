@@ -423,7 +423,9 @@ pub(crate) mod tests {
     fn the_lock_file_is_the_vaults_for_both_modes_and_both_repositories() {
         let scratch = Scratch::new("lock-file-of");
         crate::repo::init_library().unwrap();
-        let root = scratch.0.canonicalize().unwrap();
+        // The plain form on Windows, as the library opens the Vault; a
+        // `PathBuf` compares by components, so `/` and `\` are one.
+        let root = crate::fs::canonicalize(&scratch.0).unwrap();
         for (dir, no_files) in [("with", false), ("without", true)] {
             let vault = root.join(dir);
             crate::repo::init_repository(&vault, no_files).unwrap();

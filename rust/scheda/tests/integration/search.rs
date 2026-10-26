@@ -1993,6 +1993,11 @@ pub(crate) mod on_lance {
     /// An isolated repository made again has none of the commits the Index
     /// stands on: the Index compares the tree with its table of files,
     /// embeds no unchanged text, and ends as a rebuild would.
+    ///
+    /// The test makes it again with the Vault open. Windows lets no folder
+    /// go while a program holds files in it, and the Vault holds those of
+    /// the repository: there it is made again only with the Vault closed.
+    #[cfg(unix)]
     #[test]
     fn an_isolated_repository_made_again_is_caught_up_without_a_rebuild() {
         both(|| async {

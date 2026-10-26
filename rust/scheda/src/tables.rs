@@ -2827,19 +2827,26 @@ mod tests {
             .rposition(|path| path.file_name().is_some_and(|name| name == "commit"))
             .expect("the commit was flushed");
         let before: Vec<_> = one[..at_commit].to_vec();
-        for (what, found) in [
+        let mut flushed = vec![
             ("a data file", before.iter().any(|p| ends_in(p, ".lance"))),
             ("a transaction", before.iter().any(|p| ends_in(p, ".txn"))),
             ("a manifest", before.iter().any(|p| ends_in(p, ".manifest"))),
-            (
-                "the folder of the manifests",
-                before.iter().any(|p| ends_in(p, "_versions")),
-            ),
-            (
-                "the folder of the data files",
-                before.iter().any(|p| ends_in(p, "/data")),
-            ),
-        ] {
+        ];
+        // Only Unix flushes a folder (`sync_dir`); on Windows the names in
+        // one are the file system's.
+        if cfg!(unix) {
+            flushed.extend([
+                (
+                    "the folder of the manifests",
+                    before.iter().any(|p| p.ends_with("_versions")),
+                ),
+                (
+                    "the folder of the data files",
+                    before.iter().any(|p| p.ends_with("data")),
+                ),
+            ]);
+        }
+        for (what, found) in flushed {
             assert!(found, "{what} is flushed before the commit: {before:#?}");
         }
         assert!(
