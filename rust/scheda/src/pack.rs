@@ -33,6 +33,7 @@ use tokio::task::JoinHandle;
 use crate::commit::{open_lock_file, open_lock_file_at};
 use crate::error::{Error, Fault, io, lib_fault};
 use crate::fallback;
+use crate::fs::Flock;
 use crate::repo::{Repo, Repos};
 use crate::sha1::Sha1;
 
@@ -704,6 +705,7 @@ pub(crate) fn merge_all(
         Err(std::fs::TryLockError::WouldBlock) => return Ok(()),
         Err(std::fs::TryLockError::Error(err)) => return Err(io(err).into()),
     }
+    let _lock = Flock::held(file);
     let _exclusive = fallback::exclusive();
     let mut first: Option<Fault> = None;
     for lease in leases {
@@ -719,8 +721,6 @@ pub(crate) fn merge_all(
             }
         }
     }
-    // The lock goes with the file.
-    drop(file);
     first.map_or(Ok(()), |fault| Err(fault.into()))
 }
 
@@ -765,6 +765,7 @@ pub(crate) fn make_room(git: &Repository, root: &Path, merges: &Merges) -> Resul
     }
     let file = open_lock_file_at(root, LOCK_FILE)?;
     file.lock().map_err(io)?;
+    let _lock = Flock::held(file);
     let _exclusive = fallback::exclusive();
     // Not cancelled by anyone: this is the write's own merge.
     let never = AtomicBool::new(false);
@@ -775,7 +776,6 @@ pub(crate) fn make_room(git: &Repository, root: &Path, merges: &Merges) -> Resul
             Step::Idle | Step::Cancelled => break,
         }
     }
-    drop(file);
     Ok(())
 }
 
@@ -2059,7 +2059,6 @@ pub(crate) mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "known issue: under Bazel the pack lock is still held after stop(); no holder found by reading"]
     async fn close_cancels_a_running_merge_and_holds_no_lock_afterwards() {
         let scratch = Scratch::new("close");
         let repo = scratch.repo();
@@ -2725,6 +2724,7 @@ pub(crate) mod tests {
 
     /// The path of the Document `n` in a layout of three levels of 16
     /// folders, by a hash of `n`: about 24 entries a leaf at 100 000.
+    #[cfg(target_os = "linux")]
     pub(super) fn document_path(n: u64) -> String {
         let h = (n + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 20;
         format!(

@@ -17,6 +17,16 @@ API or on-disk format changes bump the minor.
   with a passphrase (scrypt) or an X25519 identity and never runs P-256.
   Ignored until `age` moves on (the owner's decision, 26 October 2026).
 
+### Fixed
+
+- A merge of packs lets its lock go when it ends, also while another thread
+  of the process starts a program. Closing the file was the only release,
+  and a child process forked in that moment kept the lock until it ran
+  `exec`: right after `Close`, or after a write that merged to make room,
+  another process could still find `.scheda/pack.lock` taken. The merge
+  now unlocks before the file closes, as the write lock does. The test of a
+  merge cancelled by `Close`, set aside as a known issue, runs again.
+
 ## [0.27.0] - 2026-10-24
 
 ### Added
