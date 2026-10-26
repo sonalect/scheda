@@ -127,6 +127,8 @@ impl Numbers {
 
 /// The number in the name `g{n}` of a generation of the Index; `None` for
 /// any other name (a number with a sign or a leading zero is not one).
+/// Read by the Index's generations and by the owner-only check of Unix.
+#[cfg(any(unix, feature = "index"))]
 pub(crate) fn generation_number(name: &str) -> Option<u64> {
     let digits = name.strip_prefix('g')?;
     if digits.is_empty() || (digits.len() > 1 && digits.starts_with('0')) {

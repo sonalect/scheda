@@ -2383,7 +2383,9 @@ pub(crate) mod tests {
         assert_versions(dir, &versions);
     }
 
-    #[cfg(unix)]
+    /// macOS keeps no name that is not UTF-8 (APFS refuses to make one), so
+    /// no Vault there has such a path.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn a_write_goes_to_a_repository_whose_path_is_not_utf_8() {
         use std::os::unix::ffi::OsStrExt;
