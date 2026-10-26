@@ -8,6 +8,15 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- `bazel test //rust:vuln` ignores RUSTSEC-2026-0387: `crypto-bigint`
+  0.5.5, which `age` 0.12 reaches through `p256` and `elliptic-curve`
+  0.13, is not constant-time in some operations, and the fix is only in
+  its 0.7 line, which that `elliptic-curve` cannot take. Scheda encrypts
+  with a passphrase (scrypt) or an X25519 identity and never runs P-256.
+  Ignored until `age` moves on (the owner's decision, 26 October 2026).
+
 ## [0.27.0] - 2026-10-24
 
 ### Added

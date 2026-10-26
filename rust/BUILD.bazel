@@ -58,7 +58,16 @@ alias(
     actual = "@rules_rust//:rustfmt",
 )
 
+# RUSTSEC-2026-0387: crypto-bigint 0.5.5 (age -> p256 -> elliptic-curve) is
+# not constant-time in some operations; the fix is the 0.7 line, which the
+# elliptic-curve 0.13 that age 0.12 uses cannot take. Ignored until age moves
+# on (the owner's decision, 26 October 2026): Scheda encrypts with a
+# passphrase or X25519 identities, not with P-256.
 cargo_audit_test(
     name = "vuln",
     size = "small",
+    flags = [
+        "--ignore",
+        "RUSTSEC-2026-0387",
+    ],
 )
