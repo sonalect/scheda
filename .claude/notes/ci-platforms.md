@@ -149,22 +149,20 @@ CI stays manual (`workflow_dispatch`), the owner's decision.
 
 The owner deferred the rest to a later session (21 October 2026):
 
-- The CLI does not link with Cargo on Windows: esaxx-rs (tokenizers, from
-  model2vec-rs, both of its tokenizer features) builds with
-  `.static_crt(true)`, `/MT`, against `/MD` of mimalloc and the rest
-  (LNK2038). Bazel links it only because the toolchain's `/MD` comes after
-  esaxx's `/MT` in the compile line. esaxx-rs 0.1.10 (2023) is its latest
-  release, model2vec-rs 0.3.0 its latest, and both of model2vec-rs's
-  tokenizer features turn on `tokenizers/esaxx_fast`. Only the CLI depends
-  on it. The owner's decision: a Sonalect fork of esaxx-rs without
-  `static_crt(true)`, under `[patch.crates-io]` (every crate `/MD` as under
-  Bazel, `cargo install --git` included; Knowqore may meet the same). The
-  owner makes the fork together with the agent.
+- The CLI did not link with Cargo on Windows: esaxx-rs, reached only
+  through model2vec-rs -> tokenizers (`esaxx_fast`, needed only to train a
+  Unigram tokenizer), built its C++ with `.static_crt(true)` (`/MT`)
+  against `/MD` of the rest (LNK2038). Settled on 26 October 2026: the
+  owner removed the CLI's Model2Vec embedder (too weak to be of use), so
+  no fork is needed.
 - `aspect_rules_py` 1.12.1 (the Sonalect fork) does not know the `abi3t`
   tag of uv 0.11.3+ locks: eight DEBUG warnings per run (cryptography's
   cp315 wheels, skipped, which 3.14 does not use anyway). Knowqore's
   `uv.lock` has them too: fix the fork once for both.
 - Release automation as in protocontract is not done.
+- RUSTSEC-2026-0387 (`crypto-bigint` 0.5.5 via `age` -> `p256`) is
+  ignored in `//rust:vuln` until `age` moves to the 0.7 line (the owner's
+  decision, 26 October 2026).
 - A blocking port may be called once after `Close` returned (the
   protocontract pull above). **Decided 23 October 2026:** protocontract
   starts no item for a reader that is gone (`sender.is_closed()` before
