@@ -16,11 +16,6 @@ API or on-disk format changes bump the minor.
   its 0.7 line, which that `elliptic-curve` cannot take. Scheda encrypts
   with a passphrase (scrypt) or an X25519 identity and never runs P-256.
   Ignored until `age` moves on (the owner's decision, 26 October 2026).
-- On macOS, Bazel links programs without a compact unwind table
-  (`-no_compact_unwind`): Apple's linker warned, on every program that links
-  Lance, that its `__eh_frame` (over 16 MB) was too large for the table to
-  point into. The unwinder reads the DWARF table instead; a panic unwinds
-  a little slower.
 
 ### Removed
 
