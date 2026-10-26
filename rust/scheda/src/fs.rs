@@ -394,13 +394,32 @@ fn move_file(from: &Path, to: &Path, flags: u32) -> std::io::Result<()> {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
 
-    fn wide(path: &Path) -> Vec<u16> {
-        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    /// `path` as `MoveFileExW` takes it at any length: absolute (as
+    /// `GetFullPathNameW` makes it: backslashes, no `.` or `..`), in the
+    /// verbatim form. Without the prefix the call refuses a path of `MAX_PATH`
+    /// characters or more, which a folder named for a long collection
+    /// reaches.
+    fn wide(path: &Path) -> std::io::Result<Vec<u16>> {
+        let absolute = std::path::absolute(path)?;
+        let text: Vec<u16> = absolute.as_os_str().encode_wide().collect();
+        let backslash = u16::from(b'\\');
+        let mut out: Vec<u16> = Vec::with_capacity(text.len() + 8);
+        if text.starts_with(&[backslash, backslash, u16::from(b'?'), backslash]) {
+            out.extend(&text);
+        } else if let Some(share) = text.strip_prefix(&[backslash, backslash]) {
+            out.extend(r"\\?\UNC\".encode_utf16());
+            out.extend(share);
+        } else {
+            out.extend(r"\\?\".encode_utf16());
+            out.extend(&text);
+        }
+        out.push(0);
+        Ok(out)
     }
 
-    let from = wide(from);
-    let to = wide(to);
-    // SAFETY: both buffers are NUL-terminated UTF-16 from `encode_wide`.
+    let from = wide(from)?;
+    let to = wide(to)?;
+    // SAFETY: both buffers are NUL-terminated UTF-16.
     if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), flags) } == 0 {
         Err(std::io::Error::last_os_error())
     } else {
