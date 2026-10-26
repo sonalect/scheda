@@ -42,6 +42,11 @@ API or on-disk format changes bump the minor.
   reaches: the rename that publishes a file took the path as it was, and
   Windows takes a long one only in its verbatim form (`\\?\C:\…`). It is
   given so now.
+- On Windows a merge of packs that could remove a pack's index but not its
+  pack file (a handle of the process maps it) left every handle that saw
+  the pack in the pool, as if nothing had gone, so they kept the pack open
+  and grew slower with each merge. The pack is gone once its index is, and
+  those handles are let go.
 - A merge of packs lets its lock go when it ends, also while another thread
   of the process starts a program. Closing the file was the only release,
   and a child process forked in that moment kept the lock until it ran

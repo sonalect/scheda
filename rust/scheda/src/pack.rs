@@ -849,9 +849,13 @@ pub(crate) fn merge_due(
         if stem == fresh {
             continue;
         }
-        // A pack that cannot be removed (Windows keeps a file another
-        // reader has open) stays: its objects are in the new pack too, and
-        // a later merge takes it again.
+        // A pack whose index cannot be removed stays whole: its objects are
+        // in the new pack too, and a later merge takes it again. One whose
+        // index went is gone for every reader, so the handles that saw it
+        // are let go, though Windows may keep a file of it that a handle
+        // maps. That file stays as no pack: nothing removes a pack file
+        // without its index, which is also how a new pack of git looks
+        // before its index is written.
         if remove_pack(&pack_dir, stem).is_ok() {
             removed = true;
         }
@@ -1451,7 +1455,14 @@ fn index_entries(idx: &Path) -> Result<Option<Vec<(u64, Oid)>>, Fault> {
 
 /// Removes the files of the pack `stem` from `pack_dir`, its index first:
 /// a pack is found through its index, so a reader that lists the folder
-/// meanwhile sees the pack whole or not at all.
+/// meanwhile sees the pack whole or not at all. Once the index is gone the
+/// pack is gone for every reader that looks again; a file of it that
+/// Windows keeps while a handle maps it stays behind, which no listing
+/// takes for a pack.
+///
+/// # Errors
+///
+/// `STORAGE` when the index cannot be removed: the pack is whole then.
 fn remove_pack(pack_dir: &Path, stem: &str) -> Result<(), Fault> {
     let mut others = Vec::new();
     for entry in fs::read_dir(pack_dir).map_err(io)? {
@@ -1467,11 +1478,7 @@ fn remove_pack(pack_dir: &Path, stem: &str) -> Result<(), Fault> {
     }
     fs::remove_file(pack_dir.join(format!("{stem}.idx"))).map_err(io)?;
     for name in others {
-        match fs::remove_file(pack_dir.join(name)) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(io(err)),
-        }
+        let _ = fs::remove_file(pack_dir.join(name));
     }
     Ok(())
 }
@@ -2475,9 +2482,11 @@ pub(crate) mod tests {
     }
 
     fn vault_root(scratch: &Scratch, limits: Limits) -> PathBuf {
-        let root = std::fs::canonicalize(&scratch.0).unwrap().join("vault");
+        // The path the library opens the Vault by (the plain form on
+        // Windows), which the hooks are keyed by.
+        let root = crate::fs::canonicalize(&scratch.0).unwrap().join("vault");
         std::fs::create_dir_all(&root).unwrap();
-        let root = std::fs::canonicalize(&root).unwrap();
+        let root = crate::fs::canonicalize(&root).unwrap();
         hooks::set_limits(&root, limits);
         root
     }
